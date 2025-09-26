@@ -1,0 +1,47 @@
+# Build directories
+/build/
+/bin/
+/lib/
+/CMakeFiles/
+/CMakeCache.txt
+/cmake_install.cmake
+/Makefile
+/assets
+
+# IDE files
+*.swp
+*.swo
+*.user
+*.vcxproj*
+*.idea/
+*.vscode/
+*.DS_Store
+
+# Compiled object files
+*.o
+*.obj
+*.so
+*.dll
+*.exe
+*.out
+
+# Generated files
+*.log
+*.tmp
+
+# Test and coverage
+*.gcno
+*.gcda
+*.gcov
+
+# Other
+*.a
+*.lai
+*.la
+
+# Python specific
+/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.ipynb_checkpoints
