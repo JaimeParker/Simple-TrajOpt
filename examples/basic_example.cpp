@@ -6,7 +6,7 @@
 
 #include "perching_optimizer.h"
 #include "traj_opt.h"
-#include "trajectory_optimizer.h"
+#include "traj_opt_perching_v1.h"
 
 // Helper function to compare trajectories
 bool compareTrajectories(const Trajectory& traj1, const Trajectory& traj2, double tolerance = 1e-3) {

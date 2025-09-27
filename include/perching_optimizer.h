@@ -836,10 +836,10 @@ class PerchingOptimizer {
     }
 
     static bool computeBodyRateYawCost(const Eigen::Vector3d& acceleration,
-                                const Eigen::Vector3d& jerk,
-                                Eigen::Vector3d& grad_acceleration,
-                                Eigen::Vector3d& grad_jerk,
-                                double& cost) {
+                                       const Eigen::Vector3d& jerk,
+                                       Eigen::Vector3d& grad_acceleration,
+                                       Eigen::Vector3d& grad_jerk,
+                                       double& cost) {
         (void)acceleration;
         (void)jerk;
         (void)grad_acceleration;
