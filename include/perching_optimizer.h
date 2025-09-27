@@ -36,7 +36,7 @@ class PerchingOptimizer {
           vel_w_(1.0),
           acc_w_(1.0),
           thrust_w_(1.0),
-          omega_w_(1.0),
+          body_rate_w_(1.0),
           perching_collision_w_(1.0),
           landing_speed_offset_(1.0),
           tail_length_(0.3),
@@ -44,10 +44,11 @@ class PerchingOptimizer {
           platform_radius_(0.5),
           max_thrust_(20.0),
           min_thrust_(2.0),
-          max_omega_(3.0),
-          max_yaw_omega_(2.0),
+          max_body_rate_(3.0),
+          max_yaw_body_rate_(2.0),
           max_vel_(10.0),
           max_acc_(10.0),
+          minco_optimizer_(),
           optimization_vars_(nullptr),
           gravity_vec_(0.0, 0.0, -9.8),
           landing_vel_(Eigen::Vector3d::Zero()),
@@ -77,20 +78,20 @@ class PerchingOptimizer {
                           double max_acceleration,
                           double max_thrust,
                           double min_thrust,
-                          double max_omega,
-                          double max_yaw_omega) {
+                          double max_body_rate,
+                          double max_yaw_body_rate) {
         assert(max_velocity > 0.0 && "Max velocity must be positive");
         assert(max_acceleration > 0.0 && "Max acceleration must be positive");
         assert(max_thrust > min_thrust && "Max thrust must be greater than min thrust");
-        assert(max_omega > 0.0 && "Max omega must be positive");
-        assert(max_yaw_omega > 0.0 && "Max yaw omega must be positive");
+        assert(max_body_rate > 0.0 && "Max body rate must be positive");
+        assert(max_yaw_body_rate > 0.0 && "Max yaw body rate must be positive");
 
         max_vel_ = max_velocity;
         max_acc_ = max_acceleration;
         max_thrust_ = max_thrust;
         min_thrust_ = min_thrust;
-        max_omega_ = max_omega;
-        max_yaw_omega_ = max_yaw_omega;
+        max_body_rate_ = max_body_rate;
+        max_yaw_body_rate_ = max_yaw_body_rate;
     }
 
     void setRobotParameters(double landing_speed_offset,
@@ -114,14 +115,14 @@ class PerchingOptimizer {
                                 double velocity_weight,
                                 double acceleration_weight,
                                 double thrust_weight,
-                                double omega_weight,
+                                double body_rate_weight,
                                 double perching_collision_weight) {
         assert(time_weight >= 0.0 && "Time weight must be non-negative");
         assert(position_weight >= 0.0 && "Position weight must be non-negative");
         assert(velocity_weight >= 0.0 && "Velocity weight must be non-negative");
         assert(acceleration_weight >= 0.0 && "Acceleration weight must be non-negative");
         assert(thrust_weight >= 0.0 && "Thrust weight must be non-negative");
-        assert(omega_weight >= 0.0 && "Omega weight must be non-negative");
+        assert(body_rate_weight >= 0.0 && "Body rate weight must be non-negative");
         assert(perching_collision_weight >= 0.0 && "Perching collision weight must be non-negative");
 
         time_w_ = time_weight;
@@ -130,7 +131,7 @@ class PerchingOptimizer {
         vel_w_ = velocity_weight;
         acc_w_ = acceleration_weight;
         thrust_w_ = thrust_weight;
-        omega_w_ = omega_weight;
+        body_rate_w_ = body_rate_weight;
         perching_collision_w_ = perching_collision_weight;
     }
 
@@ -183,6 +184,7 @@ class PerchingOptimizer {
         thrust_mid_level_ = (max_thrust_ + min_thrust_) / 2.0;
         thrust_half_range_ = (max_thrust_ - min_thrust_) / 2.0;
 
+        // TODO: I need to define the landing_vel_ sometimes, so add a setter for it
         landing_vel_ = target_vel_ - landing_att_z_vec_ * landing_speed_offset_;
 
         landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
@@ -213,6 +215,7 @@ class PerchingOptimizer {
             }
             tail_angle = initial_tail_angle_;
             tail_velocity_params = initial_tail_velocity_params_;
+            std::cout << "reuse initial guess" << std::endl;
         } else {
             Eigen::MatrixXd initial_boundary = initial_state_matrix_;
             Eigen::MatrixXd final_boundary(3, 4);
@@ -223,7 +226,7 @@ class PerchingOptimizer {
 
             double boundary_duration = (final_boundary.col(0) - initial_boundary.col(0)).norm() / max_vel_;
             CoefficientMat coefficient_matrix;
-            double max_omega = 0.0;
+            double max_body_rate = 0.0;
 
             do {
                 boundary_duration += 1.0;
@@ -232,8 +235,8 @@ class PerchingOptimizer {
                 std::vector<double> durations{boundary_duration};
                 std::vector<CoefficientMat> coefficients{coefficient_matrix};
                 Trajectory boundary_traj(durations, coefficients);
-                max_omega = getMaxOmega(boundary_traj, gravity_vec_);
-            } while (max_omega > 1.5 * max_omega_);
+                max_body_rate = getMaxBodyRate(boundary_traj, gravity_vec_);
+            } while (max_body_rate > 1.5 * max_body_rate_);
 
             Eigen::VectorXd polynomial_terms(8);
             polynomial_terms(7) = 1.0;
@@ -247,7 +250,7 @@ class PerchingOptimizer {
             log_time_var = logC2(boundary_duration / num_pieces_);
         }
 
-        lbfgs::lbfgs_parameter_t lbfgs_params;
+        lbfgs::lbfgs_parameter_t lbfgs_params{};
         lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
         lbfgs_params.mem_size = 32;
         lbfgs_params.past = 3;
@@ -315,9 +318,9 @@ class PerchingOptimizer {
         trajectory = minco_optimizer_.getTraj();
 
 #ifndef NDEBUG
-        double max_omega = getMaxOmega(trajectory, gravity_vec_);
+        double max_body_rate = getMaxBodyRate(trajectory, gravity_vec_);
         double max_thrust = trajectory.getMaxThrust();
-        std::cout << "[PerchingOptimizer] Trajectory stats - maxOmega: " << max_omega
+        std::cout << "[PerchingOptimizer] Trajectory stats - maxBodyRate: " << max_body_rate
                   << ", maxThrust: " << max_thrust << std::endl;
 #endif
 
@@ -332,7 +335,7 @@ class PerchingOptimizer {
         return true;
     }
 
-    bool feasibleCheck(Trajectory& trajectory) {
+    bool feasibleCheck(Trajectory& trajectory) const {
         double dt = 0.01;
         for (double t = 0.0; t < trajectory.getTotalDuration(); t += dt) {
             Eigen::Vector3d pos = trajectory.getPos(t);
@@ -340,8 +343,8 @@ class PerchingOptimizer {
             Eigen::Vector3d jer = trajectory.getJer(t);
             Eigen::Vector3d thrust = acc - gravity_vec_;
             Eigen::Vector3d zb_dot = getNormalizationJacobian(thrust) * jer;
-            double omega12 = zb_dot.norm();
-            if (omega12 > max_omega_ + 0.2) {
+            double body_rate_12 = zb_dot.norm();
+            if (body_rate_12 > max_body_rate_ + 0.2) {
                 return false;
             }
             if (pos.z() < 0.1) {
@@ -535,6 +538,7 @@ class PerchingOptimizer {
         cost += optimizer->time_w_ * piece_duration;
         grad_log_time = optimizer->minco_optimizer_.gdT * gradTimeTransform(log_time_var);
 
+        // FIXME: this variable seems not accessed?
         grad_intermediate_waypoints = optimizer->minco_optimizer_.gdP;
 
         return cost;
@@ -592,8 +596,8 @@ class PerchingOptimizer {
     }
 
     static void solveBoundaryValueProblem(const double& duration,
-                                          const Eigen::MatrixXd initial_state,
-                                          const Eigen::MatrixXd final_state,
+                                          const Eigen::MatrixXd& initial_state,
+                                          const Eigen::MatrixXd& final_state,
                                           CoefficientMat& coefficient_matrix) {
         double t1 = duration;
         double t2 = t1 * t1;
@@ -638,21 +642,21 @@ class PerchingOptimizer {
         coefficient_matrix.col(3) = coefficient_matrix.col(3) / t4;
     }
 
-    static double getMaxOmega(Trajectory& trajectory,
-                              const Eigen::Vector3d& gravity_vec) {
+    static double getMaxBodyRate(Trajectory& trajectory,
+                                 const Eigen::Vector3d& gravity_vec) {
         double dt = 0.01;
-        double max_omega = 0.0;
+        double max_body_rate = 0.0;
         for (double t = 0.0; t < trajectory.getTotalDuration(); t += dt) {
             Eigen::Vector3d acc = trajectory.getAcc(t);
             Eigen::Vector3d jer = trajectory.getJer(t);
             Eigen::Vector3d thrust = acc - gravity_vec;
             Eigen::Vector3d zb_dot = getNormalizationJacobian(thrust) * jer;
-            double omega12 = zb_dot.norm();
-            if (omega12 > max_omega) {
-                max_omega = omega12;
+            double body_rate_12 = zb_dot.norm();
+            if (body_rate_12 > max_body_rate) {
+                max_body_rate = body_rate_12;
             }
         }
-        return max_omega;
+        return max_body_rate;
     }
 
     void addTimeIntegralPenalty(double& cost) {
@@ -668,7 +672,7 @@ class PerchingOptimizer {
         double alpha = 0.0;
         Eigen::Matrix<double, 8, 3> grad_coeff;
         double grad_time = 0.0;
-        double omega_weight = 0.0;
+        double integration_weight = 0.0;
 
         int inner_loop = integration_steps_ + 1;
         step = minco_optimizer_.t(1) / integration_steps_;
@@ -688,7 +692,7 @@ class PerchingOptimizer {
             beta3 << 0.0, 0.0, 0.0, 6.0, 24.0 * sigma1, 60.0 * sigma2, 120.0 * sigma3, 210.0 * sigma4;
             beta4 << 0.0, 0.0, 0.0, 0.0, 24.0, 120.0 * sigma1, 360.0 * sigma2, 840.0 * sigma3;
             alpha = 1.0 / integration_steps_ * j;
-            omega_weight = (j == 0 || j == inner_loop - 1) ? 0.5 : 1.0;
+            integration_weight = (j == 0 || j == inner_loop - 1) ? 0.5 : 1.0;
 
             for (int i = 0; i < num_pieces_; ++i) {
                 const auto& coeff_block = minco_optimizer_.c.block<8, 3>(i * 8, 0);
@@ -721,13 +725,13 @@ class PerchingOptimizer {
                     cost_inner += cost_temp;
                 }
 
-                if (computeOmegaCost(acc, jer, grad_temp_acc, grad_temp_jer, cost_temp)) {
+                if (computeBodyRateCost(acc, jer, grad_temp_acc, grad_temp_jer, cost_temp)) {
                     grad_acc_total += grad_temp_acc;
                     grad_jer_total += grad_temp_jer;
                     cost_inner += cost_temp;
                 }
 
-                if (computeOmegaYawCost(acc, jer, grad_temp_acc, grad_temp_jer, cost_temp)) {
+                if (computeBodyRateYawCost(acc, jer, grad_temp_acc, grad_temp_jer, cost_temp)) {
                     grad_acc_total += grad_temp_acc;
                     grad_jer_total += grad_temp_jer;
                     cost_inner += cost_temp;
@@ -754,10 +758,10 @@ class PerchingOptimizer {
                 grad_time += grad_jer_total.transpose() * snap;
                 grad_time += grad_car_time;
 
-                minco_optimizer_.gdC.block<8, 3>(i * 8, 0) += omega_weight * step * grad_coeff;
-                minco_optimizer_.gdT += omega_weight * (cost_inner / integration_steps_ + alpha * step * grad_time);
-                minco_optimizer_.gdT += i * omega_weight * step * grad_car_time;
-                cost += omega_weight * step * cost_inner;
+                minco_optimizer_.gdC.block<8, 3>(i * 8, 0) += integration_weight * step * grad_coeff;
+                minco_optimizer_.gdT += integration_weight * (cost_inner / integration_steps_ + alpha * step * grad_time);
+                minco_optimizer_.gdT += i * integration_weight * step * grad_car_time;
+                cost += integration_weight * step * cost_inner;
             }
             sigma1 += step;
         }
@@ -765,7 +769,7 @@ class PerchingOptimizer {
 
     bool computeVelocityCost(const Eigen::Vector3d& velocity,
                              Eigen::Vector3d& grad_velocity,
-                             double& cost_velocity) {
+                             double& cost_velocity) const {
         double velocity_penalty = velocity.squaredNorm() - max_vel_ * max_vel_;
         if (velocity_penalty > 0.0) {
             double gradient = 0.0;
@@ -804,15 +808,15 @@ class PerchingOptimizer {
         return has_penalty;
     }
 
-    bool computeOmegaCost(const Eigen::Vector3d& acceleration,
-                          const Eigen::Vector3d& jerk,
-                          Eigen::Vector3d& grad_acceleration,
-                          Eigen::Vector3d& grad_jerk,
-                          double& cost) {
+    bool computeBodyRateCost(const Eigen::Vector3d& acceleration,
+                             const Eigen::Vector3d& jerk,
+                             Eigen::Vector3d& grad_acceleration,
+                             Eigen::Vector3d& grad_jerk,
+                             double& cost) {
         Eigen::Vector3d thrust = acceleration - gravity_vec_;
         Eigen::Vector3d zb_dot = getNormalizationJacobian(thrust) * jerk;
-        double omega_sq = zb_dot.squaredNorm();
-        double penalty = omega_sq - max_omega_ * max_omega_;
+        double body_rate_sq = zb_dot.squaredNorm();
+        double penalty = body_rate_sq - max_body_rate_ * max_body_rate_;
         if (penalty > 0.0) {
             double gradient = 0.0;
             cost = smoothedL1(penalty, gradient);
@@ -821,8 +825,8 @@ class PerchingOptimizer {
             grad_jerk = getNormalizationJacobian(thrust).transpose() * grad_zb_dot;
             grad_acceleration = getNormalizationHessian(thrust, jerk).transpose() * grad_zb_dot;
 
-            cost *= omega_w_;
-            gradient *= omega_w_;
+            cost *= body_rate_w_;
+            gradient *= body_rate_w_;
             grad_acceleration *= gradient;
             grad_jerk *= gradient;
 
@@ -831,11 +835,11 @@ class PerchingOptimizer {
         return false;
     }
 
-    bool computeOmegaYawCost(const Eigen::Vector3d& acceleration,
-                             const Eigen::Vector3d& jerk,
-                             Eigen::Vector3d& grad_acceleration,
-                             Eigen::Vector3d& grad_jerk,
-                             double& cost) {
+    static bool computeBodyRateYawCost(const Eigen::Vector3d& acceleration,
+                                const Eigen::Vector3d& jerk,
+                                Eigen::Vector3d& grad_acceleration,
+                                Eigen::Vector3d& grad_jerk,
+                                double& cost) {
         (void)acceleration;
         (void)jerk;
         (void)grad_acceleration;
@@ -846,7 +850,7 @@ class PerchingOptimizer {
 
     bool computeFloorCost(const Eigen::Vector3d& position,
                           Eigen::Vector3d& grad_position,
-                          double& cost_position) {
+                          double& cost_position) const {
         static double z_floor = 0.4;
         double penalty = z_floor - position.z();
         if (penalty > 0.0) {
@@ -1016,7 +1020,7 @@ class PerchingOptimizer {
     double vel_w_;
     double acc_w_;
     double thrust_w_;
-    double omega_w_;
+    double body_rate_w_;
     double perching_collision_w_;
 
     double landing_speed_offset_;
@@ -1026,8 +1030,8 @@ class PerchingOptimizer {
 
     double max_thrust_;
     double min_thrust_;
-    double max_omega_;
-    double max_yaw_omega_;
+    double max_body_rate_;
+    double max_yaw_body_rate_;
     double max_vel_;
     double max_acc_;
 
