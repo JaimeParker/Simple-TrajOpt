@@ -57,7 +57,18 @@ class SimpleTrajOpt {
 
     // --- PUBLIC API ---
 
-    void setDynamicLimits(double max_vel, double max_acc) {
+    void setDynamicLimits(double max_velocity,
+                          double max_acceleration,
+                          double max_thrust,
+                          double min_thrust,
+                          double max_body_rate,
+                          double max_yaw_body_rate) {
+        vel_max_ = max_velocity;
+        acc_max_ = max_acceleration;
+        thrust_max_ = max_thrust;
+        thrust_min_ = min_thrust;
+        body_rate_max_ = max_body_rate;
+        yaw_rate_max_ = max_yaw_body_rate;
     }
 
     void setWeights(double time_w, double vel_w, double acc_w) {
@@ -79,7 +90,102 @@ class SimpleTrajOpt {
     bool generateTrajectory(const DroneState& initial_state,
                             int num_pieces,
                             Trajectory& trajectory) {
-        // TODO: no need for initial guess strategy
+        // Store input parameters
+        initial_state_ = initial_state;
+        num_pieces_ = num_pieces;
+        waypoint_dim_ = num_pieces_ - 1;
+
+        const int total_vars = time_var_dim_ + 3 * waypoint_dim_ + 3;
+        if (optimization_vars_ != nullptr) {
+            delete[] optimization_vars_;
+        }
+        optimization_vars_ = new double[total_vars];
+
+        // Initialize MINCO optimizer
+        minco_optimizer_.reset(num_pieces_);
+
+        // TODO: more optimization variables
+        double& log_time_var = optimization_vars_[0];
+        Eigen::Map<Eigen::MatrixXd> waypoints(optimization_vars_ + time_var_dim_, 3, waypoint_dim_);
+        // double& tail_angle = optimization_vars_[time_var_dim_ + 3 * waypoint_dim_];
+        // Eigen::Map<Eigen::Vector2d> tail_velocity_params(optimization_vars_ + time_var_dim_ + 3 * waypoint_dim_ + 1);
+
+        for (int i = 0; i < total_vars; ++i) {
+            optimization_vars_[i] = 0.0;
+        }
+
+        // TODO: get final state from a function
+        DroneState final_state = computeFinalState(initial_state_, optimization_vars_);
+
+        // Create straight-line waypoints
+        // for (int i = 0; i < waypoint_dim_; ++i) {
+        //     double ratio = static_cast<double>(i + 1) / static_cast<double>(num_pieces_);
+        //     waypoints.col(i) = initial_state_.position + ratio * (final_state.position - initial_state_.position);
+        // }
+        // TODO: also use a function to get waypoints, straight line is too simple
+
+        // Initial time guess
+        double initial_duration = std::max(1.0, (final_state.position - initial_state_.position).norm() / (vel_max_ * 0.5));
+        log_time_var = logC2(initial_duration / num_pieces_);
+
+        // Set up L-BFGS parameters
+        lbfgs::lbfgs_parameter_t lbfgs_params;
+        lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
+        lbfgs_params.mem_size = 32;
+        lbfgs_params.past = 3;
+        lbfgs_params.g_epsilon = 0.0;
+        lbfgs_params.min_step = 1e-16;
+        lbfgs_params.delta = 1e-4;
+        lbfgs_params.line_search_type = 0;
+
+        double min_objective = 0.0;
+
+        // Run optimization
+        int result = lbfgs::lbfgs_optimize(
+            total_vars,
+            optimization_vars_,
+            &min_objective,
+            &SimpleTrajOpt::objectiveFunction,
+            nullptr,
+            nullptr,  // No early exit callback
+            this,
+            &lbfgs_params);
+
+        if (result < 0) {
+            delete[] optimization_vars_;
+            optimization_vars_ = nullptr;
+            return false;
+        }
+
+        // Extract final results
+        double piece_duration = expC2(log_time_var);
+        double total_duration = num_pieces_ * piece_duration;
+
+        Eigen::MatrixXd final_state = computeFinalState(total_duration, optimization_vars_);
+
+        // Convert DroneState to matrix format for MINCO
+        Eigen::MatrixXd initial_matrix(3, 4);
+        initial_matrix.col(0) = initial_state_.position;
+        initial_matrix.col(1) = initial_state_.velocity;
+        initial_matrix.col(2) = initial_state_.acceleration;
+        initial_matrix.col(3) = initial_state_.jerk;
+
+        // Ensure final_state is properly sized
+        if (final_state.rows() != 3 || final_state.cols() != 4) {
+            delete[] optimization_vars_;
+            optimization_vars_ = nullptr;
+            return false;
+        }
+
+        // Generate final trajectory
+        minco_optimizer_.generate(initial_matrix, final_state, waypoints, piece_duration);
+        trajectory = minco_optimizer_.getTraj();
+
+        // Clean up
+        delete[] optimization_vars_;
+        optimization_vars_ = nullptr;
+
+        return true;
     }
 
    protected:
@@ -94,12 +200,6 @@ class SimpleTrajOpt {
         var_count = 0;
     }
 
-    /**
-     * @brief Computes the final state (pos, vel, acc, jerk) of the trajectory.
-     * @param total_duration The total duration of the trajectory.
-     * @param optimization_vars The raw array of current optimization variables.
-     * @return A 3x4 matrix representing the final state.
-     */
     virtual Eigen::MatrixXd computeFinalState(double total_duration, const double* optimization_vars) = 0;
 
     /**
@@ -114,6 +214,15 @@ class SimpleTrajOpt {
                                     const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& acc, const Eigen::Vector3d& jer,
                                     Eigen::Vector3d& grad_pos_total, Eigen::Vector3d& grad_vel_total, Eigen::Vector3d& grad_acc_total, Eigen::Vector3d& grad_jer_total) {
         // Base implementation has no custom penalties.
+        (void)cost;
+        (void)pos;
+        (void)vel;
+        (void)acc;
+        (void)jer;
+        (void)grad_pos_total;
+        (void)grad_vel_total;
+        (void)grad_acc_total;
+        (void)grad_jer_total;
     }
 
     // --- CORE (NON-VIRTUAL) IMPLEMENTATION ---
@@ -121,7 +230,178 @@ class SimpleTrajOpt {
    private:
     // --- L-BFGS CALLBACK AND HELPERS ---
 
-    // (Static helpers like expC2, logC2, smoothedL1, etc. would go here)
+    static double objectiveFunction(void* ptr,
+                                    const double* vars,
+                                    double* grads,
+                                    int n) {
+        (void)n;
+        auto* optimizer = static_cast<SimpleTrajOpt*>(ptr);
+
+        // Unpack variables
+        const double& log_time_var = vars[0];
+        double& grad_log_time = grads[0];
+
+        Eigen::Map<const Eigen::MatrixXd> waypoints(vars + 1, 3, optimizer->waypoint_dim_);
+        Eigen::Map<Eigen::MatrixXd> grad_waypoints(grads + 1, 3, optimizer->waypoint_dim_);
+
+        // Calculate piece duration
+        double piece_duration = expC2(log_time_var);
+        double total_duration = optimizer->num_pieces_ * piece_duration;
+
+        // Get final state from derived class
+        Eigen::MatrixXd final_state = optimizer->computeFinalState(total_duration, vars);
+
+        // Convert initial state to matrix format
+        Eigen::MatrixXd initial_matrix(3, 4);
+        initial_matrix.col(0) = optimizer->initial_state_.position;
+        initial_matrix.col(1) = optimizer->initial_state_.velocity;
+        initial_matrix.col(2) = optimizer->initial_state_.acceleration;
+        initial_matrix.col(3) = optimizer->initial_state_.jerk;
+
+        // Generate trajectory for current iteration
+        optimizer->minco_optimizer_.generate(initial_matrix, final_state, waypoints, piece_duration);
+
+        // Initialize cost with snap cost
+        double cost = optimizer->minco_optimizer_.getTrajSnapCost();
+        optimizer->minco_optimizer_.calGrads_CT();
+
+        // Add time integral penalty
+        optimizer->addTimeIntegralPenalty(cost);
+
+        // Propagate gradients
+        optimizer->minco_optimizer_.calGrads_PT();
+
+        // Add time cost
+        optimizer->minco_optimizer_.gdT += optimizer->time_w_;
+        cost += optimizer->time_w_ * piece_duration;
+
+        // Calculate final gradients
+        grad_log_time = optimizer->minco_optimizer_.gdT * gradTimeTransform(log_time_var);
+        grad_waypoints = optimizer->minco_optimizer_.gdP;
+
+        return cost;
+    }
+
+    void addTimeIntegralPenalty(double& cost) {
+        Eigen::Vector3d pos, vel, acc, jer, snap;
+        Eigen::Vector3d grad_pos_total, grad_vel_total, grad_acc_total, grad_jer_total;
+        double cost_temp = 0.0;
+
+        Eigen::Matrix<double, 8, 1> beta0, beta1, beta2, beta3, beta4;
+        double sigma1 = 0.0;
+        double step = 0.0;
+        double alpha = 0.0;
+        Eigen::Matrix<double, 8, 3> grad_c;
+        double grad_t = 0.0;
+        double integration_weight = 0.0;
+
+        int inner_loop = integration_steps_ + 1;
+        step = minco_optimizer_.t(1) / integration_steps_;
+
+        for (int j = 0; j < inner_loop; ++j) {
+            if (j == 0 || j == integration_steps_) {
+                integration_weight = 1.0 / 6.0;
+            } else if (j % 2 == 1) {
+                integration_weight = 2.0 / 3.0;
+            } else {
+                integration_weight = 1.0 / 3.0;
+            }
+            integration_weight *= step;
+
+            for (int i = 0; i < num_pieces_; ++i) {
+                alpha = sigma1 + step * j;
+
+                // Calculate beta vectors for polynomial evaluation
+                beta0 << 1.0, alpha, alpha * alpha, alpha * alpha * alpha,
+                    alpha * alpha * alpha * alpha, alpha * alpha * alpha * alpha * alpha,
+                    alpha * alpha * alpha * alpha * alpha * alpha, alpha * alpha * alpha * alpha * alpha * alpha * alpha;
+                beta1 << 0.0, 1.0, 2.0 * alpha, 3.0 * alpha * alpha,
+                    4.0 * alpha * alpha * alpha, 5.0 * alpha * alpha * alpha * alpha,
+                    6.0 * alpha * alpha * alpha * alpha * alpha, 7.0 * alpha * alpha * alpha * alpha * alpha * alpha;
+                beta2 << 0.0, 0.0, 2.0, 6.0 * alpha,
+                    12.0 * alpha * alpha, 20.0 * alpha * alpha * alpha,
+                    30.0 * alpha * alpha * alpha * alpha, 42.0 * alpha * alpha * alpha * alpha * alpha;
+                beta3 << 0.0, 0.0, 0.0, 6.0,
+                    24.0 * alpha, 60.0 * alpha * alpha,
+                    120.0 * alpha * alpha * alpha, 210.0 * alpha * alpha * alpha * alpha;
+                beta4 << 0.0, 0.0, 0.0, 0.0,
+                    24.0, 120.0 * alpha,
+                    360.0 * alpha * alpha, 840.0 * alpha * alpha * alpha;
+
+                // Calculate drone state at current point
+                pos = minco_optimizer_.c.block<3, 8>(0, i * 8) * beta0;
+                vel = minco_optimizer_.c.block<3, 8>(0, i * 8) * beta1 / minco_optimizer_.t(i + 1);
+                acc = minco_optimizer_.c.block<3, 8>(0, i * 8) * beta2 / (minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1));
+                jer = minco_optimizer_.c.block<3, 8>(0, i * 8) * beta3 / (minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1));
+                snap = minco_optimizer_.c.block<3, 8>(0, i * 8) * beta4 / (minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1));
+
+                // Initialize gradient accumulators
+                grad_pos_total.setZero();
+                grad_vel_total.setZero();
+                grad_acc_total.setZero();
+                grad_jer_total.setZero();
+
+                // Standard velocity and acceleration costs
+                computeVelocityCost(vel, grad_vel_total, cost_temp);
+                cost += cost_temp * integration_weight;
+
+                computeAccelerationCost(acc, grad_acc_total, cost_temp);
+                cost += cost_temp * integration_weight;
+
+                // Call virtual hook for custom penalties
+                addCustomPenalties(cost_temp, pos, vel, acc, jer, grad_pos_total, grad_vel_total, grad_acc_total, grad_jer_total);
+                cost += cost_temp * integration_weight;
+
+                // Update gradients
+                grad_c = Eigen::Matrix<double, 8, 3>::Zero();
+                grad_c += beta0 * grad_pos_total.transpose();
+                grad_c += (beta1 / minco_optimizer_.t(i + 1)) * grad_vel_total.transpose();
+                grad_c += (beta2 / (minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1))) * grad_acc_total.transpose();
+                grad_c += (beta3 / (minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1) * minco_optimizer_.t(i + 1))) * grad_jer_total.transpose();
+
+                minco_optimizer_.gdC.block<3, 8>(0, i * 8) += grad_c.transpose() * integration_weight;
+
+                // Time gradient contribution
+                grad_t = -grad_vel_total.dot(vel) / minco_optimizer_.t(i + 1);
+                grad_t += -2.0 * grad_acc_total.dot(acc) / minco_optimizer_.t(i + 1);
+                grad_t += -3.0 * grad_jer_total.dot(jer) / minco_optimizer_.t(i + 1);
+
+                minco_optimizer_.gdT += grad_t * integration_weight;
+            }
+
+            sigma1 += step;
+        }
+    }
+
+    void computeVelocityCost(const Eigen::Vector3d& velocity,
+                             Eigen::Vector3d& grad_velocity,
+                             double& cost_velocity) {
+        double vel_penalty = velocity.squaredNorm() - vel_max_ * vel_max_;
+        if (vel_penalty > 0.0) {
+            double smoothed_grad = 0.0;
+            cost_velocity = smoothedL1(vel_penalty, smoothed_grad) * vel_w_;
+            grad_velocity = 2.0 * velocity * smoothed_grad * vel_w_;
+        } else {
+            cost_velocity = 0.0;
+            grad_velocity.setZero();
+        }
+    }
+
+    void computeAccelerationCost(const Eigen::Vector3d& acceleration,
+                                 Eigen::Vector3d& grad_acceleration,
+                                 double& cost_acceleration) {
+        double acc_penalty = acceleration.squaredNorm() - acc_max_ * acc_max_;
+        if (acc_penalty > 0.0) {
+            double smoothed_grad = 0.0;
+            cost_acceleration = smoothedL1(acc_penalty, smoothed_grad) * acc_w_;
+            grad_acceleration = 2.0 * acceleration * smoothed_grad * acc_w_;
+        } else {
+            cost_acceleration = 0.0;
+            grad_acceleration.setZero();
+        }
+    }
+
+    // STATIC UTILITY FUNCTIONS
     static bool quaternionToZAxis(const Eigen::Quaterniond& quat,
                                   Eigen::Vector3d& z_axis) {
         Eigen::Matrix3d rotation = quat.toRotationMatrix();
@@ -221,7 +501,46 @@ class SimpleTrajOpt {
         const double t7 = t4 * t3;
 
         CoefficientMat boundary_cond;
-        // TODO:
+        // Set up boundary conditions matrix
+        boundary_cond.col(0) = initial_state.position;
+        boundary_cond.col(1) = initial_state.velocity;
+        boundary_cond.col(2) = initial_state.acceleration;
+        boundary_cond.col(3) = initial_state.jerk;
+        boundary_cond.col(4) = final_state.position;
+        boundary_cond.col(5) = final_state.velocity;
+        boundary_cond.col(6) = final_state.acceleration;
+        boundary_cond.col(7) = final_state.jerk;
+
+        // Solve for polynomial coefficients
+        coefficient_matrix.col(0) =
+            (boundary_cond.col(7) / 6.0 + boundary_cond.col(3) / 6.0) * t3 +
+            (-2.0 * boundary_cond.col(6) + 2.0 * boundary_cond.col(2)) * t2 +
+            (10.0 * boundary_cond.col(5) + 10.0 * boundary_cond.col(1)) * t1 +
+            (-20.0 * boundary_cond.col(4) + 20.0 * boundary_cond.col(0));
+        coefficient_matrix.col(1) =
+            (-0.5 * boundary_cond.col(7) - boundary_cond.col(3) / 1.5) * t3 +
+            (6.5 * boundary_cond.col(6) - 7.5 * boundary_cond.col(2)) * t2 +
+            (-34.0 * boundary_cond.col(5) - 36.0 * boundary_cond.col(1)) * t1 +
+            (70.0 * boundary_cond.col(4) - 70.0 * boundary_cond.col(0));
+        coefficient_matrix.col(2) =
+            (0.5 * boundary_cond.col(7) + boundary_cond.col(3)) * t3 +
+            (-7.0 * boundary_cond.col(6) + 10.0 * boundary_cond.col(2)) * t2 +
+            (39.0 * boundary_cond.col(5) + 45.0 * boundary_cond.col(1)) * t1 +
+            (-84.0 * boundary_cond.col(4) + 84.0 * boundary_cond.col(0));
+        coefficient_matrix.col(3) =
+            (-boundary_cond.col(7) / 6.0 - boundary_cond.col(3) / 1.5) * t3 +
+            (2.5 * boundary_cond.col(6) - 5.0 * boundary_cond.col(2)) * t2 +
+            (-15.0 * boundary_cond.col(5) - 20.0 * boundary_cond.col(1)) * t1 +
+            (35.0 * boundary_cond.col(4) - 35.0 * boundary_cond.col(0));
+        coefficient_matrix.col(4) = boundary_cond.col(3) / 6.0;
+        coefficient_matrix.col(5) = boundary_cond.col(2) / 2.0;
+        coefficient_matrix.col(6) = boundary_cond.col(1);
+        coefficient_matrix.col(7) = boundary_cond.col(0);
+
+        coefficient_matrix.col(0) = coefficient_matrix.col(0) / t7;
+        coefficient_matrix.col(1) = coefficient_matrix.col(1) / t6;
+        coefficient_matrix.col(2) = coefficient_matrix.col(2) / t5;
+        coefficient_matrix.col(3) = coefficient_matrix.col(3) / t4;
     }
 
     // PRIVATE MEMBERS
@@ -232,11 +551,12 @@ class SimpleTrajOpt {
     int integration_steps_{20};
     double time_w_{1.0}, vel_w_{1.0}, acc_w_{1.0}, pos_w_{1.0}, thrust_w_{1.0};
     double collision_w_{1.0}, body_rate_w_{1.0};
+    int time_var_dim_ = 1;
 
     // Dynamic limits
     double vel_max_{10.0}, acc_max_{10.0};
     double thrust_min_{2.0}, thrust_max_{20.0};
-    double body_rate_max_{5.0}, body_rate_yaw_max_{5.0};
+    double body_rate_max_{5.0}, yaw_rate_max_{5.0};
 
     // Environment parameters
     Eigen::Vector3d gravity_vec_{0.0, 0.0, -9.8};
