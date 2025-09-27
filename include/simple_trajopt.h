@@ -58,11 +58,10 @@ class SimpleTrajOpt {
     // --- PUBLIC API ---
 
     void setDynamicLimits(double max_vel, double max_acc) {
-        max_vel_ = max_vel;
-        max_acc_ = max_acc;
     }
 
     void setWeights(double time_w, double vel_w, double acc_w) {
+        // TODO: add more weights
         time_w_ = time_w;
         vel_w_ = vel_w;
         acc_w_ = acc_w;
@@ -118,19 +117,6 @@ class SimpleTrajOpt {
     }
 
     // --- CORE (NON-VIRTUAL) IMPLEMENTATION ---
-
-    // --- PROTECTED MEMBERS ---
-    int num_pieces_{0};
-    int waypoint_dim_{0};
-    int integration_steps_{20};
-    double max_vel_{10.0}, max_acc_{10.0};
-    double time_w_{1.0}, vel_w_{1.0}, acc_w_{1.0};
-
-    Eigen::Vector3d gravity_vec_{0.0, 0.0, -9.8};
-    DroneState initial_state_;
-
-    minco::MINCO_S4_Uniform minco_optimizer_;
-    double* optimization_vars_{nullptr};
 
    private:
     // --- L-BFGS CALLBACK AND HELPERS ---
@@ -237,4 +223,28 @@ class SimpleTrajOpt {
         CoefficientMat boundary_cond;
         // TODO:
     }
+
+    // PRIVATE MEMBERS
+
+    // Trajectory parameters
+    int num_pieces_{0};
+    int waypoint_dim_{0};
+    int integration_steps_{20};
+    double time_w_{1.0}, vel_w_{1.0}, acc_w_{1.0}, pos_w_{1.0}, thrust_w_{1.0};
+    double collision_w_{1.0}, body_rate_w_{1.0};
+
+    // Dynamic limits
+    double vel_max_{10.0}, acc_max_{10.0};
+    double thrust_min_{2.0}, thrust_max_{20.0};
+    double body_rate_max_{5.0}, body_rate_yaw_max_{5.0};
+
+    // Environment parameters
+    Eigen::Vector3d gravity_vec_{0.0, 0.0, -9.8};
+
+    // Drone state
+    DroneState initial_state_;
+
+    // MINCO optimizer instance
+    minco::MINCO_S4_Uniform minco_optimizer_;
+    double* optimization_vars_{nullptr};
 };
