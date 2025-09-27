@@ -69,7 +69,7 @@ def optimize_trajectory():
     # Generate trajectory
     print("Generating trajectory...")
     success, trajectory = optimizer.generateTrajectory(
-        initial_state, target_pos, target_vel, landing_quat, 1
+        initial_state, target_pos, target_vel, landing_quat, 3
     )
     
     if not success:

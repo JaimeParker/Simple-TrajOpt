@@ -30,14 +30,16 @@
   "cmake.buildDirectory": "${workspaceFolder}/build",
   "cmake.configureOnOpen": true,
   "cSpell.words": [
-    "minco"
+    "minco", "lbfgs"
   ],
 
   // Exclude build directory from file explorer and search
   "files.exclude": {
-    "**/build": true
+    "**/build": true,
+    "**/cmake-build-debug": true
   },
   "search.exclude": {
-    "**/build": true
+    // "**/build": true,
+    "**/cmake-build-debug": true
   }
 }

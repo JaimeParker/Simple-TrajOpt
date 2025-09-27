@@ -215,7 +215,6 @@ class PerchingOptimizer {
             }
             tail_angle = initial_tail_angle_;
             tail_velocity_params = initial_tail_velocity_params_;
-            std::cout << "reuse initial guess" << std::endl;
         } else {
             Eigen::MatrixXd initial_boundary = initial_state_matrix_;
             Eigen::MatrixXd final_boundary(3, 4);
@@ -229,6 +228,7 @@ class PerchingOptimizer {
             double max_body_rate = 0.0;
 
             do {
+                // TODO: is this a good way to search for a feasible trajectory?
                 boundary_duration += 1.0;
                 final_boundary.col(0) = target_pos_ + target_vel_ * boundary_duration;
                 solveBoundaryValueProblem(boundary_duration, initial_boundary, final_boundary, coefficient_matrix);
