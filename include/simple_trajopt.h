@@ -3,6 +3,7 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <chrono>
+#include <memory>
 #include <vector>
 
 #include "lbfgs_raw.hpp"
@@ -82,12 +83,15 @@ struct TrajOptParameters {
  * Still in development.
  */
 class SimpleTrajOpt {
-   public:
+public:
+    TrajOptParameters params_;
     // Constructor and virtual destructor for proper inheritance
     SimpleTrajOpt() = default;
     virtual ~SimpleTrajOpt() {
+        // optimization_vars_ is managed as raw pointer due to L-BFGS API requirements
         if (optimization_vars_ != nullptr) {
             delete[] optimization_vars_;
+            optimization_vars_ = nullptr;
         }
     }
 
@@ -132,7 +136,7 @@ class SimpleTrajOpt {
     // Get the current trajectory from the MINCO optimizer
     Trajectory getCurrentTrajectory() const { return minco_optimizer_.getTraj(); }
 
-   protected:
+protected:
     // --- PURE VIRTUAL ---
     virtual bool generateTrajectory(const DroneState& initial_state,
                                     Trajectory& trajectory,
@@ -142,7 +146,9 @@ class SimpleTrajOpt {
     virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
 
     // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
-    virtual DroneState generateTerminalState(Eigen::Vector3d& terminal_pos, Eigen::Vector3d& terminal_vel, Eigen::Vector3d& terminal_acc) {
+    virtual DroneState generateTerminalState(const Eigen::Vector3d& terminal_pos, 
+                                             const Eigen::Vector3d& terminal_vel, 
+                                             const Eigen::Vector3d& terminal_acc) {
         DroneState terminal_state;
         terminal_state.position = terminal_pos;
         terminal_state.velocity = terminal_vel;
@@ -152,7 +158,7 @@ class SimpleTrajOpt {
         return terminal_state;
     }
 
-    virtual DroneState generateTerminalState(Trajectory& trajectory, double time_point) {
+    virtual DroneState generateTerminalState(const Trajectory& trajectory, double time_point) {
         Eigen::Vector3d terminal_pos = trajectory.getPos(time_point);
         Eigen::Vector3d terminal_vel = trajectory.getVel(time_point);
         Eigen::Vector3d terminal_acc = trajectory.getAcc(time_point);
@@ -210,7 +216,7 @@ class SimpleTrajOpt {
     virtual Eigen::Map<Eigen::MatrixXd>
     getIntermediateWaypoints(const Eigen::Vector3d& start_pos, const Eigen::Vector3d& end_pos,
                              int num_pieces, bool use_straight_line = true,
-                             Trajectory& trajectory = getDefaultTrajectory()) {
+                             const Trajectory& trajectory = getDefaultTrajectory()) {
         Eigen::Map<Eigen::MatrixXd> waypoints(optimization_vars_ + params_.time_var_dim, 3, params_.waypoint_num);
 
         if (!use_straight_line && trajectory.getPieceNum() > 0) {
@@ -231,27 +237,6 @@ class SimpleTrajOpt {
     }
 
     virtual bool optimize(double* optimization_vars) {
-        // TODO: finish this lbfgs wrapper
-
-        // will call:
-        // inline int lbfgs_optimize(int n,
-        //                   double* x,
-        //                   double* ptr_fx,
-        //                   lbfgs_evaluate_t proc_evaluate,
-        //                   lbfgs_stepbound_t proc_stepbound,
-        //                   lbfgs_progress_t proc_progress,
-        //                   void* instance,
-        //                   lbfgs_parameter_t* _param)
-
-        // n is the number of optimized variables
-        // x is the initial optimized variables
-        // ptr_fx is the final cost, should be defined out of the function and passed by reference
-        // proc_evaluate is the function pointer to calculate cost and gradients (objectiveFunction)
-        // proc_stepbound is the function pointer to calculate step bound, can be set to nullptr
-        // proc_progress is the function pointer to report optimization progress, can be set to nullptr or earlyExitCallback
-        // instance is the pointer to the class instance, usually set to "this"
-        // _param is the pointer to the lbfgs_parameter_t struct, in this class set to lbfgs_params_
-
         const int total_vars = params_.time_var_dim + 3 * params_.waypoint_num + params_.custom_var_dim;
         double min_objective = 0.0;
         int optimization_result = 0;
@@ -314,7 +299,7 @@ class SimpleTrajOpt {
         return true;
     }
 
-   private:
+protected:
     // --- L-BFGS CALLBACK AND HELPERS ---
     static double objectiveFunction(void* ptr,
                                     const double* vars,
@@ -399,7 +384,7 @@ class SimpleTrajOpt {
         // 
     }
 
-    void addTimeIntegralPenalty(double& cost) {
+    virtual void addTimeIntegralPenalty(double& cost) {
         Eigen::Vector3d pos, vel, acc, jer, snap;
         Eigen::Vector3d grad_pos_total, grad_vel_total, grad_acc_total, grad_jer_total;
         double cost_temp = 0.0;
@@ -543,7 +528,7 @@ class SimpleTrajOpt {
                norm_cu;
     }
 
-    static double smoothedL1(const double& value,
+    static double smoothedL1(double value,
                              double& gradient) {
         static double mu = 0.01;
         if (value < 0.0) {
@@ -560,7 +545,7 @@ class SimpleTrajOpt {
         }
     }
 
-    static double smoothedZeroOne(const double& value,
+    static double smoothedZeroOne(double value,
                                   double& gradient) {
         static double mu = 0.01;
         static double mu4 = mu * mu * mu * mu;
@@ -603,12 +588,12 @@ class SimpleTrajOpt {
         }
     }
 
-    static Trajectory& getDefaultTrajectory() {
+    static const Trajectory& getDefaultTrajectory() {
         static Trajectory default_trajectory;
         return default_trajectory;
     }
 
-    static void solveBoundaryValueProblem(const double& duration,
+    static void solveBoundaryValueProblem(double duration,
                                           const DroneState& initial_state,
                                           const DroneState& final_state,
                                           CoefficientMat& coefficient_matrix) {
@@ -663,8 +648,7 @@ class SimpleTrajOpt {
         coefficient_matrix.col(3) = coefficient_matrix.col(3) / t4;
     }
 
-    // PRIVATE MEMBERS
-    TrajOptParameters params_;
+    // PROTECTED MEMBERS - accessible by derived classes
     DroneState initial_state_;
 
     // optimizer

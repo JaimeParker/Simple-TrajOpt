@@ -56,6 +56,9 @@ target_link_libraries(precision_test traj_opt_lib)
 add_executable(simple_comparison examples/simple_comparison.cpp)
 target_link_libraries(simple_comparison traj_opt_lib)
 
+add_executable(simple_perching_test examples/simple_perching_test.cpp)
+target_link_libraries(simple_perching_test traj_opt_lib)
+
 # Create Python module
 pybind11_add_module(perching_optimizer_py src/perching_optimizer_api.cc)
 
