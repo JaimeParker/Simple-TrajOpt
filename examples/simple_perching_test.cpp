@@ -1,4 +1,6 @@
 #include "simple_perching.h"
+#include "perching_optimizer.h"
+
 #include <iostream>
 #include <Eigen/Dense>
 
