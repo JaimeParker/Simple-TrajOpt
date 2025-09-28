@@ -39,6 +39,39 @@ struct DroneState {
     }
 };
 
+struct TrajOptParameters {
+    // Dynamic Limits
+    double max_velocity = 10.0;
+    double max_acceleration = 10.0;
+    double thrust_max = 20.0;
+    double thrust_min = 2.0;
+    double max_body_rate = 3.0;
+    double thrust_half_level = -1.0;
+    double thrust_half_range = -1.0;
+
+    // Optimization Weights
+    double time_weight = 1.0;
+    double pos_penalty_weight = 100.0;
+    double vel_penalty_weight = 10.0;
+    double acc_penalty_weight = 1.0;
+
+    // Numerical Parameters
+    int integration_steps = 20;
+    int traj_pieces_num = 1;
+    int time_var_dim = 1;
+    int waypoint_num = 1;
+    int custom_var_dim = 3;
+
+    // Environmental Parameters
+    Eigen::Vector3d gravity_vec = Eigen::Vector3d(0.0, 0.0, -9.81);
+
+    // LBFGS Parameters
+    int lbfgs_mem_size = 32;
+    int lbfgs_past = 3;
+    double lbfgs_g_epsilon = 0.0;
+    double lbfgs_delta = 1e-4;
+};
+
 /**
  * @brief A base class for simplified trajectory optimization.
  * * This class provides the core machinery for MINCO-based trajectory optimization using L-BFGS.
@@ -58,87 +91,60 @@ class SimpleTrajOpt {
 
     // --- PUBLIC API ---
 
-    void setDynamicLimits(double max_velocity,
-                          double max_acceleration,
-                          double max_thrust,
-                          double min_thrust,
-                          double max_body_rate,
-                          double max_yaw_body_rate) {
-        vel_max_ = max_velocity;
-        acc_max_ = max_acceleration;
-        thrust_max_ = max_thrust;
-        thrust_min_ = min_thrust;
-        body_rate_max_ = max_body_rate;
-        yaw_rate_max_ = max_yaw_body_rate;
-    }
-
-    void setWeights(double time_w, double vel_w, double acc_w) {
-        // TODO: add more weights
-        time_w_ = time_w;
-        vel_w_ = vel_w;
-        acc_w_ = acc_w;
-    }
-
-    void setIntegrationSteps(int steps) {
-        integration_steps_ = steps;
+    // TODO: use variables as input directly, set param_ inside and in the last step of the function
+    void setParameters(const TrajOptParameters& params) {
+        params_ = params;
     }
 
    protected:
     // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
 
-    virtual DroneState computeFinalState(double total_duration, const double* optimization_vars) = 0;
+    virtual bool generateInitialGuess(double* optimization_vars) = 0;
 
-    // template <typename... Args>
-    // DroneState computeFinalState(Args&&... args) {
-    //     // This is a template and cannot be virtual.
-    //     // The actual implementation will be in the derived class.
-    //     // This base implementation is a placeholder.
-    //     static_assert(sizeof...(Args) < 0, "computeFinalState must be implemented in the derived class.");
-    //     return DroneState{};
-    // }
+    virtual DroneState generateTerminalState(Eigen::Vector3d& terminal_pos, Eigen::Vector3d& terminal_vel, Eigen::Vector3d& terminal_acc);
+    virtual DroneState generateTerminalState(Trajectory& trajectory, double total_duration);
+
+    virtual DroneState computeFinalState(double total_duration, const double* optimization_vars) = 0;
 
     virtual bool generateTrajectory(const DroneState& initial_state,
                                     Trajectory& trajectory,
                                     int num_pieces = 1,
                                     int custom_var_dim = 3) = 0;
 
-    virtual void preProcessOptUtils(int num_pieces,
-                                    int custom_var_dim = 3,
-                                    int time_var_dim = 1) {
-        traj_pieces_num_ = num_pieces;
-        waypoint_num_ = traj_pieces_num_ - 1;
-        time_var_dim_ = time_var_dim;
+    virtual void preProcessOptUtils() {
+        // This function should be called by the user manually after setting parameters and before optimization
 
-        const int total_vars = time_var_dim_ + 3 * waypoint_num_ + custom_var_dim;
+        params_.traj_pieces_num = std::max(1, params_.traj_pieces_num);
+        params_.waypoint_num = std::max(0, params_.traj_pieces_num - 1);
+        params_.time_var_dim = std::max(1, params_.time_var_dim);
+
+        const int total_vars = params_.time_var_dim + 3 * params_.waypoint_num + params_.custom_var_dim;
         if (optimization_vars_ != nullptr) {
             delete[] optimization_vars_;
         }
         optimization_vars_ = new double[total_vars];
 
-        thrust_half_level_ = 0.5 * (thrust_max_ + thrust_min_);
-        thrust_half_range_ = 0.5 * (thrust_max_ - thrust_min_);
+        params_.thrust_half_level = 0.5 * (params_.thrust_max + params_.thrust_min);
+        params_.thrust_half_range = 0.5 * (params_.thrust_max - params_.thrust_min);
 
-        minco_optimizer_.reset(traj_pieces_num_);
-
-        // TODO: tail_angle, tail_velocity_params, and land_vel_ are not handled yet
-        // tail_angle is used to set terminal acceleration
+        minco_optimizer_.reset(params_.traj_pieces_num);
     }
 
     virtual Eigen::Map<Eigen::MatrixXd>
     getIntermediateWaypoints(const Eigen::Vector3d& start_pos, const Eigen::Vector3d& end_pos,
                              int num_pieces, bool use_straight_line = true,
                              Trajectory& trajectory = getDefaultTrajectory()) {
-        Eigen::Map<Eigen::MatrixXd> waypoints(optimization_vars_ + time_var_dim_, 3, waypoint_num_);
+        Eigen::Map<Eigen::MatrixXd> waypoints(optimization_vars_ + params_.time_var_dim, 3, params_.waypoint_num);
 
         if (!use_straight_line && trajectory.getPieceNum() > 0) {
             double total_duration = trajectory.getTotalDuration();
-            for (int i = 0; i < waypoint_num_; ++i) {
+            for (int i = 0; i < params_.waypoint_num; ++i) {
                 double ratio = static_cast<double>(i + 1) / static_cast<double>(num_pieces);
                 double sample_time = ratio * total_duration;
                 waypoints.col(i) = trajectory.getPos(sample_time);
             }
         } else {
-            for (int i = 0; i < waypoint_num_; ++i) {
+            for (int i = 0; i < params_.waypoint_num; ++i) {
                 double ratio = static_cast<double>(i + 1) / static_cast<double>(num_pieces);
                 waypoints.col(i) = start_pos + ratio * (end_pos - start_pos);
             }
@@ -151,6 +157,11 @@ class SimpleTrajOpt {
 
    private:
     // --- L-BFGS CALLBACK AND HELPERS ---
+
+    bool optimize() {
+        // TODO: realize the lbfgs optimization process here
+        return true;
+    }
 
     static double objectiveFunction(void* ptr,
                                     const double* vars,
@@ -475,27 +486,12 @@ class SimpleTrajOpt {
 
     // PRIVATE MEMBERS
 
-    // Trajectory parameters
-    int traj_pieces_num_{0};
-    int waypoint_num_{0};
-    int integration_steps_{20};
-    double time_w_{1.0}, vel_w_{1.0}, acc_w_{1.0}, pos_w_{1.0}, thrust_w_{1.0};
-    double collision_w_{1.0}, body_rate_w_{1.0};
-    int time_var_dim_ = 1;
-
-    // Dynamic limits
-    double vel_max_{10.0}, acc_max_{10.0};
-    double thrust_min_{2.0}, thrust_max_{20.0};
-    double body_rate_max_{5.0}, yaw_rate_max_{5.0};
-    double thrust_half_level_{10.0}, thrust_half_range_{8.0};
-
-    // Environment parameters
-    Eigen::Vector3d gravity_vec_{0.0, 0.0, -9.8};
+    TrajOptParameters params_;
 
     // Drone state
     DroneState initial_state_;
 
     // MINCO optimizer instance
     minco::MINCO_S4_Uniform minco_optimizer_;
-    double* optimization_vars_{nullptr};
+    double* optimization_vars_ = nullptr;
 };
