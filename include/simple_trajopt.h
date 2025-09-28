@@ -69,7 +69,9 @@ struct TrajOptParameters {
     int lbfgs_mem_size = 32;
     int lbfgs_past = 3;
     double lbfgs_g_epsilon = 0.0;
+    double lbfgs_min_step = 1e-16;
     double lbfgs_delta = 1e-4;
+    int lbfgs_line_search_type = 0;
 };
 
 /**
@@ -120,6 +122,8 @@ class SimpleTrajOpt {
         params_.acc_penalty_weight = acc_penalty_weight;
     }
 
+    void setInitialState(const DroneState& initial_state) { initial_state_ = initial_state; }
+
    protected:
     // --- PURE VIRTUAL ---
     virtual bool generateTrajectory(const DroneState& initial_state,
@@ -147,6 +151,12 @@ class SimpleTrajOpt {
 
     virtual void preProcessOptUtils() {
         // This function should be called by the user manually after setting parameters and before optimization
+        lbfgs_params_.mem_size = params_.lbfgs_mem_size;
+        lbfgs_params_.past = params_.lbfgs_past;
+        lbfgs_params_.g_epsilon = params_.lbfgs_g_epsilon;
+        lbfgs_params_.min_step = params_.lbfgs_min_step;
+        lbfgs_params_.delta = params_.lbfgs_delta;
+        lbfgs_params_.line_search_type = params_.lbfgs_line_search_type;
 
         params_.traj_pieces_num = std::max(1, params_.traj_pieces_num);
         params_.waypoint_num = std::max(0, params_.traj_pieces_num - 1);
@@ -187,13 +197,33 @@ class SimpleTrajOpt {
         return waypoints;
     }
 
-   private:
-    // --- L-BFGS CALLBACK AND HELPERS ---
-    bool optimize() {
-        // TODO: realize the lbfgs optimization process here
-        return true;
+    virtual bool optimize(double* optimization_vars, double& final_cost) {
+        // TODO: finish this lbfgs wrapper
+
+        // will call:
+        // inline int lbfgs_optimize(int n,
+        //                   double* x,
+        //                   double* ptr_fx,
+        //                   lbfgs_evaluate_t proc_evaluate,
+        //                   lbfgs_stepbound_t proc_stepbound,
+        //                   lbfgs_progress_t proc_progress,
+        //                   void* instance,
+        //                   lbfgs_parameter_t* _param)
+
+        // n is the number of optimized variables
+        // x is the initial optimized variables
+        // ptr_fx is the final cost, should be defined out of the function and passed by reference
+        // proc_evaluate is the function pointer to calculate cost and gradients (objectiveFunction)
+        // proc_stepbound is the function pointer to calculate step bound, can be set to nullptr
+        // proc_progress is the function pointer to report optimization progress, can be set to nullptr or earlyExitCallback
+        // instance is the pointer to the class instance, usually set to "this"
+        // _param is the pointer to the lbfgs_parameter_t struct, in this class set to lbfgs_params_
+
+        const int total_vars = params_.time_var_dim + 3 * params_.waypoint_num + params_.custom_var_dim;
     }
 
+   private:
+    // --- L-BFGS CALLBACK AND HELPERS ---
     static double objectiveFunction(void* ptr,
                                     const double* vars,
                                     double* grads,
@@ -524,5 +554,6 @@ class SimpleTrajOpt {
 
     // MINCO optimizer instance
     minco::MINCO_S4_Uniform minco_optimizer_;
+    lbfgs::lbfgs_parameter_t lbfgs_params_;
     double* optimization_vars_ = nullptr;
 };
