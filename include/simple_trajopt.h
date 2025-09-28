@@ -90,26 +90,60 @@ class SimpleTrajOpt {
     }
 
     // --- PUBLIC API ---
+    void setParameters(const int traj_pieces_num = 1,
+                       const int time_var_dim = 1,
+                       const int waypoint_num = 1,
+                       const int custom_var_dim = 3,
+                       const double max_velocity = 10.0,
+                       const double max_acceleration = 10.0,
+                       const double thrust_max = 20.0,
+                       const double thrust_min = 2.0,
+                       const double time_weight = 1.0,
+                       const double pos_penalty_weight = 100.0,
+                       const double vel_penalty_weight = 10.0,
+                       const double acc_penalty_weight = 1.0) {
+        params_.traj_pieces_num = traj_pieces_num;
+        params_.waypoint_num = waypoint_num;
+        params_.time_var_dim = time_var_dim;
+        params_.custom_var_dim = custom_var_dim;
 
-    // TODO: use variables as input directly, set param_ inside and in the last step of the function
-    void setParameters(const TrajOptParameters& params) {
-        params_ = params;
+        params_.max_velocity = max_velocity;
+        params_.max_acceleration = max_acceleration;
+        params_.thrust_max = thrust_max;
+        params_.thrust_min = thrust_min;
+        params_.thrust_half_level = 0.5 * (thrust_max + thrust_min);
+        params_.thrust_half_range = 0.5 * (thrust_max - thrust_min);
+
+        params_.time_weight = time_weight;
+        params_.pos_penalty_weight = pos_penalty_weight;
+        params_.vel_penalty_weight = vel_penalty_weight;
+        params_.acc_penalty_weight = acc_penalty_weight;
     }
 
    protected:
-    // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
-
-    virtual bool generateInitialGuess(double* optimization_vars) = 0;
-
-    virtual DroneState generateTerminalState(Eigen::Vector3d& terminal_pos, Eigen::Vector3d& terminal_vel, Eigen::Vector3d& terminal_acc);
-    virtual DroneState generateTerminalState(Trajectory& trajectory, double total_duration);
-
-    virtual DroneState computeFinalState(double total_duration, const double* optimization_vars) = 0;
-
+    // --- PURE VIRTUAL ---
     virtual bool generateTrajectory(const DroneState& initial_state,
                                     Trajectory& trajectory,
                                     int num_pieces = 1,
                                     int custom_var_dim = 3) = 0;
+
+    // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
+    virtual DroneState generateTerminalState(Eigen::Vector3d& terminal_pos, Eigen::Vector3d& terminal_vel, Eigen::Vector3d& terminal_acc) {
+        DroneState terminal_state;
+        terminal_state.position = terminal_pos;
+        terminal_state.velocity = terminal_vel;
+        terminal_state.acceleration = terminal_acc;
+
+        // Default values for jerk, attitude, and body rate
+        return terminal_state;
+    }
+
+    virtual DroneState generateTerminalState(Trajectory& trajectory, double time_point) {
+        Eigen::Vector3d terminal_pos = trajectory.getPos(time_point);
+        Eigen::Vector3d terminal_vel = trajectory.getVel(time_point);
+        Eigen::Vector3d terminal_acc = trajectory.getAcc(time_point);
+        return generateTerminalState(terminal_pos, terminal_vel, terminal_acc);
+    }
 
     virtual void preProcessOptUtils() {
         // This function should be called by the user manually after setting parameters and before optimization
@@ -153,11 +187,8 @@ class SimpleTrajOpt {
         return waypoints;
     }
 
-    // --- CORE (NON-VIRTUAL) IMPLEMENTATION ---
-
    private:
     // --- L-BFGS CALLBACK AND HELPERS ---
-
     bool optimize() {
         // TODO: realize the lbfgs optimization process here
         return true;
