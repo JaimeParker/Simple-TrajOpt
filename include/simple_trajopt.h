@@ -124,12 +124,22 @@ class SimpleTrajOpt {
 
     void setInitialState(const DroneState& initial_state) { initial_state_ = initial_state; }
 
+    // Getter functions
+    double getOptimizedTotalDuration() const { return optimized_total_duration_; }
+    double getLogTimeVar() const { return log_time_var_; }
+    int getIterationCount() const { return iteration_count_; }
+
+    // Get the current trajectory from the MINCO optimizer
+    Trajectory getCurrentTrajectory() const { return minco_optimizer_.getTraj(); }
+
    protected:
     // --- PURE VIRTUAL ---
     virtual bool generateTrajectory(const DroneState& initial_state,
                                     Trajectory& trajectory,
                                     int num_pieces = 1,
                                     int custom_var_dim = 3) = 0;
+
+    virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
 
     // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
     virtual DroneState generateTerminalState(Eigen::Vector3d& terminal_pos, Eigen::Vector3d& terminal_vel, Eigen::Vector3d& terminal_acc) {
@@ -147,6 +157,29 @@ class SimpleTrajOpt {
         Eigen::Vector3d terminal_vel = trajectory.getVel(time_point);
         Eigen::Vector3d terminal_acc = trajectory.getAcc(time_point);
         return generateTerminalState(terminal_pos, terminal_vel, terminal_acc);
+    }
+
+    // Virtual callback for early termination (can be overridden by derived classes)
+    virtual int earlyExitCallback(const double* vars,
+                                  const double* grads,
+                                  const double fx,
+                                  const double xnorm,
+                                  const double gnorm,
+                                  const double step,
+                                  int n,
+                                  int k,
+                                  int ls) {
+        // Default implementation: continue optimization
+        (void)vars;
+        (void)grads;
+        (void)fx;
+        (void)xnorm;
+        (void)gnorm;
+        (void)step;
+        (void)n;
+        (void)k;
+        (void)ls;
+        return 0;
     }
 
     virtual void preProcessOptUtils() {
@@ -197,7 +230,7 @@ class SimpleTrajOpt {
         return waypoints;
     }
 
-    virtual bool optimize(double* optimization_vars, double& final_cost) {
+    virtual bool optimize(double* optimization_vars) {
         // TODO: finish this lbfgs wrapper
 
         // will call:
@@ -220,6 +253,65 @@ class SimpleTrajOpt {
         // _param is the pointer to the lbfgs_parameter_t struct, in this class set to lbfgs_params_
 
         const int total_vars = params_.time_var_dim + 3 * params_.waypoint_num + params_.custom_var_dim;
+        double min_objective = 0.0;
+        int optimization_result = 0;
+        iteration_count_ = 0;
+
+        // Store the log_time_var for use in objective function
+        log_time_var_ = optimization_vars[0];
+
+        optimization_result = lbfgs::lbfgs_optimize(total_vars,
+                                                    optimization_vars,
+                                                    &min_objective,
+                                                    &SimpleTrajOpt::objectiveFunction,
+                                                    nullptr,
+                                                    &SimpleTrajOpt::earlyExitCallbackWrapper,
+                                                    this,
+                                                    &lbfgs_params_);
+
+        if (optimization_result < 0) {
+            return false;
+        }
+
+        // Update the stored log_time_var with optimized value
+        log_time_var_ = optimization_vars[0];
+        double piece_duration = expC2(log_time_var_);
+        optimized_total_duration_ = params_.traj_pieces_num * piece_duration;
+
+        return true;
+    }
+
+    // Overloaded version with custom progress callback
+    virtual bool optimize(double* optimization_vars, bool use_progress_callback) {
+        const int total_vars = params_.time_var_dim + 3 * params_.waypoint_num + params_.custom_var_dim;
+        double min_objective = 0.0;
+        int optimization_result = 0;
+        iteration_count_ = 0;
+
+        // Store the log_time_var for use in objective function
+        log_time_var_ = optimization_vars[0];
+
+        auto progress_callback = use_progress_callback ? &SimpleTrajOpt::earlyExitCallbackWrapper : nullptr;
+
+        optimization_result = lbfgs::lbfgs_optimize(total_vars,
+                                                    optimization_vars,
+                                                    &min_objective,
+                                                    &SimpleTrajOpt::objectiveFunction,
+                                                    nullptr,
+                                                    progress_callback,
+                                                    this,
+                                                    &lbfgs_params_);
+
+        if (optimization_result < 0) {
+            return false;
+        }
+
+        // Update the stored log_time_var with optimized value
+        log_time_var_ = optimization_vars[0];
+        double piece_duration = expC2(log_time_var_);
+        optimized_total_duration_ = params_.traj_pieces_num * piece_duration;
+
+        return true;
     }
 
    private:
@@ -230,20 +322,25 @@ class SimpleTrajOpt {
                                     int n) {
         (void)n;
         auto* optimizer = static_cast<SimpleTrajOpt*>(ptr);
+        optimizer->iteration_count_++;
 
         // Unpack variables
         const double& log_time_var = vars[0];
         double& grad_log_time = grads[0];
 
-        Eigen::Map<const Eigen::MatrixXd> waypoints(vars + 1, 3, optimizer->waypoint_num_);
-        Eigen::Map<Eigen::MatrixXd> grad_waypoints(grads + 1, 3, optimizer->waypoint_num_);
+        Eigen::Map<const Eigen::MatrixXd> waypoints(vars + optimizer->params_.time_var_dim, 3, optimizer->params_.waypoint_num);
+        Eigen::Map<Eigen::MatrixXd> grad_waypoints(grads + optimizer->params_.time_var_dim, 3, optimizer->params_.waypoint_num);
+
+        // Custom variables start after time_var_dim + waypoint variables
+        const double* custom_vars = vars + optimizer->params_.time_var_dim + 3 * optimizer->params_.waypoint_num;
+        double* grad_custom_vars = grads + optimizer->params_.time_var_dim + 3 * optimizer->params_.waypoint_num;
 
         // Calculate piece duration
         double piece_duration = expC2(log_time_var);
-        double total_duration = optimizer->traj_pieces_num_ * piece_duration;
+        double total_duration = optimizer->params_.traj_pieces_num * piece_duration;
 
-        // Get final state from derived class
-        auto final_state = optimizer->computeFinalState(total_duration, vars);
+        // Get final state - this should be implemented by derived class
+        auto final_state = optimizer->computeFinalState(vars, total_duration);
 
         // Convert initial state to matrix format
         Eigen::MatrixXd initial_matrix(3, 4);
@@ -251,6 +348,7 @@ class SimpleTrajOpt {
         initial_matrix.col(1) = optimizer->initial_state_.velocity;
         initial_matrix.col(2) = optimizer->initial_state_.acceleration;
         initial_matrix.col(3) = optimizer->initial_state_.jerk;
+
         Eigen::MatrixXd final_matrix(3, 4);
         final_matrix.col(0) = final_state.position;
         final_matrix.col(1) = final_state.velocity;
@@ -271,14 +369,34 @@ class SimpleTrajOpt {
         optimizer->minco_optimizer_.calGrads_PT();
 
         // Add time cost
-        optimizer->minco_optimizer_.gdT += optimizer->time_w_;
-        cost += optimizer->time_w_ * piece_duration;
+        optimizer->minco_optimizer_.gdT += optimizer->params_.time_weight;
+        cost += optimizer->params_.time_weight * piece_duration;
 
         // Calculate final gradients
         grad_log_time = optimizer->minco_optimizer_.gdT * gradTimeTransform(log_time_var);
         grad_waypoints = optimizer->minco_optimizer_.gdP;
 
+        // Zero out custom variable gradients - derived class should handle these
+        for (int i = 0; i < optimizer->params_.custom_var_dim; ++i) {
+            grad_custom_vars[i] = 0.0;
+        }
+
         return cost;
+    }
+
+    static int earlyExitCallbackWrapper(void* ptr,
+                                        const double* vars,
+                                        const double* grads,
+                                        const double fx,
+                                        const double xnorm,
+                                        const double gnorm,
+                                        const double step,
+                                        int n,
+                                        int k,
+                                        int ls) {
+        auto* optimizer = static_cast<SimpleTrajOpt*>(ptr);
+        return optimizer->earlyExitCallback(vars, grads, fx, xnorm, gnorm, step, n, k, ls);
+        // 
     }
 
     void addTimeIntegralPenalty(double& cost) {
@@ -294,11 +412,11 @@ class SimpleTrajOpt {
         double grad_t = 0.0;
         double integration_weight = 0.0;
 
-        int inner_loop = integration_steps_ + 1;
-        step = minco_optimizer_.t(1) / integration_steps_;
+        int inner_loop = params_.integration_steps + 1;
+        step = minco_optimizer_.t(1) / params_.integration_steps;
 
         for (int j = 0; j < inner_loop; ++j) {
-            if (j == 0 || j == integration_steps_) {
+            if (j == 0 || j == params_.integration_steps) {
                 integration_weight = 1.0 / 6.0;
             } else if (j % 2 == 1) {
                 integration_weight = 2.0 / 3.0;
@@ -307,7 +425,7 @@ class SimpleTrajOpt {
             }
             integration_weight *= step;
 
-            for (int i = 0; i < traj_pieces_num_; ++i) {
+            for (int i = 0; i < params_.traj_pieces_num; ++i) {
                 alpha = sigma1 + step * j;
 
                 // Calculate beta vectors for polynomial evaluation
@@ -373,11 +491,11 @@ class SimpleTrajOpt {
     void computeVelocityCost(const Eigen::Vector3d& velocity,
                              Eigen::Vector3d& grad_velocity,
                              double& cost_velocity) {
-        double vel_penalty = velocity.squaredNorm() - vel_max_ * vel_max_;
+        double vel_penalty = velocity.squaredNorm() - params_.max_velocity * params_.max_velocity;
         if (vel_penalty > 0.0) {
             double smoothed_grad = 0.0;
-            cost_velocity = smoothedL1(vel_penalty, smoothed_grad) * vel_w_;
-            grad_velocity = 2.0 * velocity * smoothed_grad * vel_w_;
+            cost_velocity = smoothedL1(vel_penalty, smoothed_grad) * params_.vel_penalty_weight;
+            grad_velocity = 2.0 * velocity * smoothed_grad * params_.vel_penalty_weight;
         } else {
             cost_velocity = 0.0;
             grad_velocity.setZero();
@@ -387,11 +505,11 @@ class SimpleTrajOpt {
     void computeAccelerationCost(const Eigen::Vector3d& acceleration,
                                  Eigen::Vector3d& grad_acceleration,
                                  double& cost_acceleration) {
-        double acc_penalty = acceleration.squaredNorm() - acc_max_ * acc_max_;
+        double acc_penalty = acceleration.squaredNorm() - params_.max_acceleration * params_.max_acceleration;
         if (acc_penalty > 0.0) {
             double smoothed_grad = 0.0;
-            cost_acceleration = smoothedL1(acc_penalty, smoothed_grad) * acc_w_;
-            grad_acceleration = 2.0 * acceleration * smoothed_grad * acc_w_;
+            cost_acceleration = smoothedL1(acc_penalty, smoothed_grad) * params_.acc_penalty_weight;
+            grad_acceleration = 2.0 * acceleration * smoothed_grad * params_.acc_penalty_weight;
         } else {
             cost_acceleration = 0.0;
             grad_acceleration.setZero();
@@ -546,14 +664,15 @@ class SimpleTrajOpt {
     }
 
     // PRIVATE MEMBERS
-
     TrajOptParameters params_;
-
-    // Drone state
     DroneState initial_state_;
 
-    // MINCO optimizer instance
+    // optimizer
     minco::MINCO_S4_Uniform minco_optimizer_;
     lbfgs::lbfgs_parameter_t lbfgs_params_;
+
     double* optimization_vars_ = nullptr;
+    int iteration_count_ = 0;
+    double log_time_var_ = 0.0;
+    double optimized_total_duration_ = 0.0;
 };
