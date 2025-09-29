@@ -44,17 +44,26 @@ struct TrajOptParameters {
     // Dynamic Limits
     double max_velocity = 10.0;
     double max_acceleration = 10.0;
-    double thrust_max = 20.0;
-    double thrust_min = 2.0;
+    double max_thrust = 20.0;
+    double min_thrust = 2.0;
     double max_body_rate = 3.0;
+    double max_yaw_rate = 2.0;
     double thrust_half_level = -1.0;
     double thrust_half_range = -1.0;
+    double min_z = 0.4;
 
     // Optimization Weights
     double time_weight = 1.0;
     double pos_penalty_weight = 100.0;
     double vel_penalty_weight = 10.0;
     double acc_penalty_weight = 1.0;
+    double thrust_weight = 1.0;
+    double body_rate_weight = 1.0;
+    double collision_weight = 1.0;
+    double terminal_pos_weight = 1.0;
+    double terminal_vel_weight = 1.0;
+    double terminal_acc_weight = 1.0;
+    double terminal_att_weight = 1.0;
 
     // Numerical Parameters
     int integration_steps = 20;
@@ -83,7 +92,7 @@ struct TrajOptParameters {
  * Still in development.
  */
 class SimpleTrajOpt {
-public:
+   public:
     // Constructor and virtual destructor for proper inheritance
     SimpleTrajOpt() = default;
     virtual ~SimpleTrajOpt() {
@@ -95,58 +104,78 @@ public:
     }
 
     // --- PUBLIC API ---
-    void setParameters(const int traj_pieces_num = 1,
-                       const int time_var_dim = 1,
-                       const int waypoint_num = 1,
-                       const int custom_var_dim = 3,
-                       const double max_velocity = 10.0,
-                       const double max_acceleration = 10.0,
-                       const double thrust_max = 20.0,
-                       const double thrust_min = 2.0,
-                       const double time_weight = 1.0,
-                       const double pos_penalty_weight = 100.0,
-                       const double vel_penalty_weight = 10.0,
-                       const double acc_penalty_weight = 1.0) {
-        params_.traj_pieces_num = traj_pieces_num;
-        params_.waypoint_num = waypoint_num;
-        params_.time_var_dim = time_var_dim;
-        params_.custom_var_dim = custom_var_dim;
+    void setDynamicLimits(double max_velocity = 10.0,
+                          double max_acceleration = 10.0,
+                          double max_thrust = 20.0,
+                          double min_thrust = 2.0,
+                          double max_body_rate = 3.0,
+                          double max_yaw_body_rate = 2.0) {
+        assert(max_velocity > 0.0 && "Max velocity must be positive");
+        assert(max_acceleration > 0.0 && "Max acceleration must be positive");
+        assert(max_thrust > min_thrust && "Max thrust must be greater than min thrust");
+        assert(max_body_rate > 0.0 && "Max body rate must be positive");
+        assert(max_yaw_body_rate > 0.0 && "Max yaw body rate must be positive");
 
         params_.max_velocity = max_velocity;
         params_.max_acceleration = max_acceleration;
-        params_.thrust_max = thrust_max;
-        params_.thrust_min = thrust_min;
-        params_.thrust_half_level = 0.5 * (thrust_max + thrust_min);
-        params_.thrust_half_range = 0.5 * (thrust_max - thrust_min);
+        params_.max_thrust = max_thrust;
+        params_.min_thrust = min_thrust;
+        params_.max_body_rate = max_body_rate;
+        params_.max_yaw_rate = max_yaw_body_rate;
+
+        params_.thrust_half_level = 0.5 * (max_thrust + min_thrust);
+        params_.thrust_half_range = 0.5 * (max_thrust - min_thrust);
+    }
+
+    void setOptimizationWeights(double time_weight = 1.0,
+                                double position_weight = 1.0,
+                                double velocity_weight = 1.0,
+                                double acceleration_weight = 1.0,
+                                double thrust_weight = 1.0,
+                                double body_rate_weight = 1.0,
+                                double terminal_velocity_weight = -1.0,
+                                double collision_weight = 1.0) {
+        assert(time_weight >= 0.0 && "Time weight must be non-negative");
+        assert(position_weight >= 0.0 && "Position weight must be non-negative");
+        assert(velocity_weight >= 0.0 && "Velocity weight must be non-negative");
+        assert(acceleration_weight >= 0.0 && "Acceleration weight must be non-negative");
+        assert(thrust_weight >= 0.0 && "Thrust weight must be non-negative");
+        assert(body_rate_weight >= 0.0 && "Body rate weight must be non-negative");
+        assert(collision_weight >= 0.0 && "Perching collision weight must be non-negative");
 
         params_.time_weight = time_weight;
-        params_.pos_penalty_weight = pos_penalty_weight;
-        params_.vel_penalty_weight = vel_penalty_weight;
-        params_.acc_penalty_weight = acc_penalty_weight;
+        params_.pos_penalty_weight = position_weight;
+        params_.vel_penalty_weight = velocity_weight;
+        params_.acc_penalty_weight = acceleration_weight;
+        params_.thrust_weight = thrust_weight;
+        params_.body_rate_weight = body_rate_weight;
+        params_.collision_weight = collision_weight;
+        params_.terminal_vel_weight = terminal_velocity_weight;
+    }
+
+    void setTrajectoryParams(int integration_steps = 20,
+                             int traj_pieces_num = 1,
+                             int time_var_dim = 1,
+                             int custom_var_num = 3) {
+        params_.integration_steps = integration_steps;
+        params_.traj_pieces_num = traj_pieces_num;
+        params_.time_var_dim = time_var_dim;
+        params_.custom_var_dim = custom_var_num;
     }
 
     void setInitialState(const DroneState& initial_state) { initial_state_ = initial_state; }
-
-    // Getter functions
-    double getOptimizedTotalDuration() const { return optimized_total_duration_; }
-    double getLogTimeVar() const { return log_time_var_; }
     int getIterationCount() const { return iteration_count_; }
-
-    // Get the current trajectory from the MINCO optimizer
     Trajectory getCurrentTrajectory() const { return minco_optimizer_.getTraj(); }
 
-protected:
-    // --- PURE VIRTUAL ---
-    virtual bool generateTrajectory(const DroneState& initial_state,
-                                    Trajectory& trajectory,
-                                    int num_pieces = 1,
-                                    int custom_var_dim = 3) = 0;
+    virtual bool generateTrajectory(const DroneState& initial_state, Trajectory& trajectory) = 0;
 
+   protected:
+    // --- PURE VIRTUAL ---
     virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
 
     // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
-    virtual DroneState generateTerminalState(const Eigen::Vector3d& terminal_pos, 
-                                             const Eigen::Vector3d& terminal_vel, 
+    virtual DroneState generateTerminalState(const Eigen::Vector3d& terminal_pos,
+                                             const Eigen::Vector3d& terminal_vel,
                                              const Eigen::Vector3d& terminal_acc) {
         DroneState terminal_state;
         terminal_state.position = terminal_pos;
@@ -164,7 +193,6 @@ protected:
         return generateTerminalState(terminal_pos, terminal_vel, terminal_acc);
     }
 
-    // Virtual callback for early termination (can be overridden by derived classes)
     virtual int earlyExitCallback(const double* vars,
                                   const double* grads,
                                   const double fx,
@@ -196,8 +224,8 @@ protected:
         }
         optimization_vars_ = new double[total_vars];
 
-        params_.thrust_half_level = 0.5 * (params_.thrust_max + params_.thrust_min);
-        params_.thrust_half_range = 0.5 * (params_.thrust_max - params_.thrust_min);
+        params_.thrust_half_level = 0.5 * (params_.max_thrust + params_.min_thrust);
+        params_.thrust_half_range = 0.5 * (params_.max_thrust - params_.min_thrust);
 
         minco_optimizer_.reset(params_.traj_pieces_num);
     }
@@ -232,9 +260,9 @@ protected:
                                      double* grads,
                                      int n) = 0;
 
-    void computeVelocityCost(const Eigen::Vector3d& velocity,
-                             Eigen::Vector3d& grad_velocity,
-                             double& cost_velocity) {
+    virtual void computeVelocityCost(const Eigen::Vector3d& velocity,
+                                     Eigen::Vector3d& grad_velocity,
+                                     double& cost_velocity) {
         double vel_penalty = velocity.squaredNorm() - params_.max_velocity * params_.max_velocity;
         if (vel_penalty > 0.0) {
             double smoothed_grad = 0.0;
@@ -246,9 +274,9 @@ protected:
         }
     }
 
-    void computeAccelerationCost(const Eigen::Vector3d& acceleration,
-                                 Eigen::Vector3d& grad_acceleration,
-                                 double& cost_acceleration) {
+    virtual void computeAccelerationCost(const Eigen::Vector3d& acceleration,
+                                         Eigen::Vector3d& grad_acceleration,
+                                         double& cost_acceleration) {
         double acc_penalty = acceleration.squaredNorm() - params_.max_acceleration * params_.max_acceleration;
         if (acc_penalty > 0.0) {
             double smoothed_grad = 0.0;
@@ -258,6 +286,74 @@ protected:
             cost_acceleration = 0.0;
             grad_acceleration.setZero();
         }
+    }
+
+    virtual bool computeFloorCost(const Eigen::Vector3d& position,
+                                  Eigen::Vector3d& grad_position,
+                                  double& cost_position) const {
+        double penalty = params_.min_z - position.z();
+        if (penalty > 0.0) {
+            double gradient = 0.0;
+            cost_position = smoothedL1(penalty, gradient);
+            cost_position *= params_.pos_penalty_weight;
+            grad_position.setZero();
+            grad_position.z() = -params_.pos_penalty_weight * gradient;
+            return true;
+        }
+        return false;
+    }
+
+    virtual bool computeBodyRateCost(const Eigen::Vector3d& acceleration,
+                                     const Eigen::Vector3d& jerk,
+                                     Eigen::Vector3d& grad_acceleration,
+                                     Eigen::Vector3d& grad_jerk, double& cost) {
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
+        Eigen::Vector3d zb_dot = getNormalizationJacobian(thrust) * jerk;
+        double body_rate_sq = zb_dot.squaredNorm();
+        auto penalty = body_rate_sq - params_.max_body_rate * params_.max_body_rate;
+
+        if (penalty > 0.0) {
+            double gradient = 0.0;
+            cost = smoothedL1(penalty, gradient);
+
+            Eigen::Vector3d grad_zb_dot = 2.0 * zb_dot;
+            grad_jerk = getNormalizationJacobian(thrust).transpose() * grad_zb_dot;
+            grad_acceleration = getNormalizationHessian(thrust, jerk).transpose() * grad_zb_dot;
+
+            cost *= params_.body_rate_weight;
+            gradient *= params_.body_rate_weight;
+            grad_acceleration *= gradient;
+            grad_jerk *= gradient;
+
+            return true;
+        }
+        return false;
+    }
+
+    virtual bool computeThrustCost(const Eigen::Vector3d& acceleration,
+                                   Eigen::Vector3d& grad_acceleration, double& cost) {
+        bool has_penalty = false;
+        grad_acceleration.setZero();
+        cost = 0.0;
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
+
+        double max_penalty = thrust.squaredNorm() - params_.max_thrust * params_.max_thrust;
+        if (max_penalty > 0.0) {
+            double gradient = 0.0;
+            cost = params_.thrust_weight * smoothedL1(max_penalty, gradient);
+            grad_acceleration = params_.thrust_weight * 2.0 * gradient * thrust;
+            has_penalty = true;
+        }
+
+        double min_penalty = params_.min_thrust * params_.min_thrust - thrust.squaredNorm();
+        if (min_penalty > 0.0) {
+            double gradient = 0.0;
+            cost += params_.thrust_weight * smoothedL1(min_penalty, gradient);
+            grad_acceleration += -params_.thrust_weight * 2.0 * gradient * thrust;
+            has_penalty = true;
+        }
+
+        return has_penalty;
     }
 
     // STATIC UTILITY FUNCTIONS
