@@ -84,6 +84,11 @@ struct TrajOptParameters {
     int lbfgs_line_search_type = 0;
 };
 
+
+struct BaseComputeParams {
+    virtual ~BaseComputeParams() = default;
+};
+
 /**
  * @brief A base class for simplified trajectory optimization.
  * * This class provides the core machinery for MINCO-based trajectory optimization using L-BFGS.
@@ -171,7 +176,8 @@ class SimpleTrajOpt {
 
    protected:
     // --- PURE VIRTUAL ---
-    virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
+    // virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
+    virtual DroneState computeFinalState(const BaseComputeParams& params) = 0;
 
     // --- VIRTUAL "HOOKS" FOR DERIVED CLASSES ---
     virtual DroneState generateTerminalState(const Eigen::Vector3d& terminal_pos,

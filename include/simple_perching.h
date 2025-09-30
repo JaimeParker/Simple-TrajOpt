@@ -3,8 +3,16 @@
 #include <Eigen/Core>
 #include <Eigen/Geometry>
 #include <cassert>
+#include <tuple>
+#include <any>
+#include <stdexcept>
 
 #include "simple_trajopt.h"
+
+struct PerchingComputeParams : public BaseComputeParams {
+    const double* vars;
+    double total_duration;
+};
 
 /**
  * @brief Perching-specific trajectory optimization derived from SimpleTrajOpt
@@ -162,7 +170,31 @@ class SimplePerching : public SimpleTrajOpt {
 
    protected:
     // Override pure virtual methods from SimpleTrajOpt
-    DroneState computeFinalState(const double* vars, double total_duration) override {
+    // DroneState computeFinalState(const double* vars, double total_duration) override {
+    //     // Extract custom variables
+    //     const double tail_angle = vars[params_.time_var_dim + 3 * params_.waypoint_num];
+    //     const double* tail_velocity_params = vars + params_.time_var_dim + 3 * params_.waypoint_num + 1;
+
+    //     // Compute tail velocity using the same formula as PerchingOptimizer
+    //     Eigen::Vector3d tail_velocity = landing_vel_ +
+    //                                     tail_velocity_params[0] * landing_basis_x_ +
+    //                                     tail_velocity_params[1] * landing_basis_y_;
+
+    //     // Compute final state using the same formula as PerchingOptimizer
+    //     DroneState final_state;
+    //     final_state.position = target_pos_ + target_vel_ * total_duration + landing_att_z_vec_ * tail_length_;
+    //     final_state.velocity = tail_velocity;
+    //     final_state.acceleration = forwardThrust(tail_angle) * landing_att_z_vec_ + params_.gravity_vec;
+    //     final_state.jerk.setZero();
+
+    //     return final_state;
+    // }
+
+    DroneState computeFinalState(const BaseComputeParams& params) override {
+        const auto& perching_params = dynamic_cast<const PerchingComputeParams&>(params);
+        const double* vars = perching_params.vars;
+        double total_duration = perching_params.total_duration;
+
         // Extract custom variables
         const double tail_angle = vars[params_.time_var_dim + 3 * params_.waypoint_num];
         const double* tail_velocity_params = vars + params_.time_var_dim + 3 * params_.waypoint_num + 1;
@@ -314,7 +346,10 @@ class SimplePerching : public SimpleTrajOpt {
         double total_duration = params_.traj_pieces_num * piece_duration;
 
         // Get final state
-        auto final_state = computeFinalState(vars, total_duration);
+        PerchingComputeParams compute_params;
+        compute_params.vars = vars;
+        compute_params.total_duration = total_duration;
+        auto final_state = computeFinalState(compute_params);
 
         // Convert initial and final states to matrix format
         Eigen::MatrixXd initial_matrix(3, 4);
