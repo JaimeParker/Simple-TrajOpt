@@ -169,27 +169,6 @@ class SimplePerching : public SimpleTrajOpt {
     }
 
    protected:
-    // Override pure virtual methods from SimpleTrajOpt
-    // DroneState computeFinalState(const double* vars, double total_duration) override {
-    //     // Extract custom variables
-    //     const double tail_angle = vars[params_.time_var_dim + 3 * params_.waypoint_num];
-    //     const double* tail_velocity_params = vars + params_.time_var_dim + 3 * params_.waypoint_num + 1;
-
-    //     // Compute tail velocity using the same formula as PerchingOptimizer
-    //     Eigen::Vector3d tail_velocity = landing_vel_ +
-    //                                     tail_velocity_params[0] * landing_basis_x_ +
-    //                                     tail_velocity_params[1] * landing_basis_y_;
-
-    //     // Compute final state using the same formula as PerchingOptimizer
-    //     DroneState final_state;
-    //     final_state.position = target_pos_ + target_vel_ * total_duration + landing_att_z_vec_ * tail_length_;
-    //     final_state.velocity = tail_velocity;
-    //     final_state.acceleration = forwardThrust(tail_angle) * landing_att_z_vec_ + params_.gravity_vec;
-    //     final_state.jerk.setZero();
-
-    //     return final_state;
-    // }
-
     DroneState computeFinalState(const BaseComputeParams& params) override {
         const auto& perching_params = dynamic_cast<const PerchingComputeParams&>(params);
         const double* vars = perching_params.vars;
