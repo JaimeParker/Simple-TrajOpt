@@ -59,7 +59,7 @@ target_link_libraries(simple_comparison traj_opt_lib)
 add_executable(simple_perching_test examples/simple_perching_test.cpp)
 target_link_libraries(simple_perching_test traj_opt_lib)
 
-# Create Python module
+# Create Python module for perching optimizer
 pybind11_add_module(perching_optimizer_py src/perching_optimizer_api.cc)
 
 # Include directories for the Python module
@@ -70,5 +70,19 @@ target_link_libraries(perching_optimizer_py PRIVATE Eigen3::Eigen)
 
 # Set target properties to output the module in the build directory
 set_target_properties(perching_optimizer_py PROPERTIES 
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+)
+
+# Create Python module for catching optimizer
+pybind11_add_module(catching_optimizer_py src/catching_optimizer_api.cc)
+
+# Include directories for the Python module
+target_include_directories(catching_optimizer_py PRIVATE include ${EIGEN3_INCLUDE_DIR})
+
+# Link libraries for the Python module
+target_link_libraries(catching_optimizer_py PRIVATE Eigen3::Eigen)
+
+# Set target properties to output the module in the build directory
+set_target_properties(catching_optimizer_py PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
 )

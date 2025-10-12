@@ -6,6 +6,7 @@
 #define SIMPLE_CATCHING_H
 
 #include "simple_trajopt.h"
+#include "simple_trajectory.h"
 
 // A simple parameter struct to pass optimizer variables to computeFinalState
 struct CatchingComputeParams : public BaseComputeParams {
@@ -144,6 +145,10 @@ class SimpleCatching : public SimpleTrajOpt {
 
         DroneState final_state;
         final_state.position = target_traj_->getPosition(total_duration);
+        // TODO: position should be the same as the target's position at interception
+        // However, there should be another way to compose the final velocity and acceleration
+        // Hint: the catching_att_ quaternion should be used to define the accel direction,
+        // the magnitude of the accel can be set to [0, max_acceleration] randomly for now
         final_state.velocity = target_traj_->getVelocity(total_duration);
         final_state.acceleration = target_traj_->getAcceleration(total_duration);
         final_state.jerk.setZero(); // Assume target jerk is zero
@@ -268,7 +273,8 @@ class SimpleCatching : public SimpleTrajOpt {
         // Backpropagate gradient from final state's dependency on time
         minco_optimizer_.gdT += minco_optimizer_.gdTail.col(0).dot(target_traj_->getVelocity(total_duration));
         minco_optimizer_.gdT += minco_optimizer_.gdTail.col(1).dot(target_traj_->getAcceleration(total_duration));
-        // We assume target jerk is zero, so no gradient contribution from final acceleration.
+        // TODO: We assume target jerk is zero, so no gradient contribution from final acceleration.
+        // If not, there should be an additional term
 
         // Add time regularization cost and gradient
         cost += params_.time_weight * total_duration;
