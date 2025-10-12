@@ -13,28 +13,75 @@ sys.path.append('build')
 import numpy as np
 import catching_optimizer_py as catching
 
-#FIXME: since the SimpleTrajectory is an abstract base class, you might need to consider using DiscreteTrajectory, the derived class of it. You need to handle the python interface first, then see how to implement this class.
-# After you resolve the issue, you can remove this comment.
-# Define a simple target trajectory class
-class LinearTargetTrajectory(catching.DiscreteTrajectory):
-    """A simple linear trajectory for the target"""
+
+def create_stationary_target_trajectory(target_pos, duration, num_waypoints=50):
+    """
+    Create a DiscreteTrajectory for a stationary target (fixed point).
     
-    def __init__(self, initial_pos, velocity):
-        super().__init__()
-        self.initial_pos = np.array(initial_pos)
-        self.velocity = np.array(velocity)
+    Args:
+        target_pos: Fixed position [x, y, z]
+        duration: Total duration of the trajectory
+        num_waypoints: Number of waypoints to generate
     
-    def getPosition(self, t):
-        """Get target position at time t"""
-        return self.initial_pos + self.velocity * t
+    Returns:
+        DiscreteTrajectory object populated with waypoints
+    """
+    trajectory = catching.DiscreteTrajectory()
     
-    def getVelocity(self, t):
-        """Get target velocity at time t (constant)"""
-        return self.velocity
+    target_pos = np.array(target_pos)
+    velocity = np.array([0.0, 0.0, 0.0])  # Zero velocity for stationary target
+    acceleration = np.array([0.0, 0.0, 0.0])  # Zero acceleration
     
-    def getAcceleration(self, t):
-        """Get target acceleration at time t (zero for linear motion)"""
-        return np.array([0.0, 0.0, 0.0])
+    for i in range(num_waypoints):
+        t = i * duration / (num_waypoints - 1)
+        
+        # Create a waypoint
+        waypoint = catching.StateWaypoint()
+        waypoint.timestamp = t
+        waypoint.position = target_pos  # Fixed position
+        waypoint.velocity = velocity
+        waypoint.acceleration = acceleration
+        
+        # Add to trajectory
+        trajectory.addWaypoint(waypoint)
+    
+    return trajectory
+
+
+def create_linear_target_trajectory(initial_pos, velocity, duration, num_waypoints=50):
+    """
+    Create a DiscreteTrajectory for a linearly moving target.
+    (Kept for future testing with moving targets)
+    
+    Args:
+        initial_pos: Initial position [x, y, z]
+        velocity: Constant velocity [vx, vy, vz]
+        duration: Total duration of the trajectory
+        num_waypoints: Number of waypoints to generate
+    
+    Returns:
+        DiscreteTrajectory object populated with waypoints
+    """
+    trajectory = catching.DiscreteTrajectory()
+    
+    initial_pos = np.array(initial_pos)
+    velocity = np.array(velocity)
+    acceleration = np.array([0.0, 0.0, 0.0])  # Zero acceleration for linear motion
+    
+    for i in range(num_waypoints):
+        t = i * duration / (num_waypoints - 1)
+        
+        # Create a waypoint
+        waypoint = catching.StateWaypoint()
+        waypoint.timestamp = t
+        waypoint.position = initial_pos + velocity * t
+        waypoint.velocity = velocity
+        waypoint.acceleration = acceleration
+        
+        # Add to trajectory
+        trajectory.addWaypoint(waypoint)
+    
+    return trajectory
 
 
 def main():
@@ -55,17 +102,27 @@ def main():
     print(f"  Velocity: {initial_state.velocity}")
     print(f"  Acceleration: {initial_state.acceleration}")
     
-    # Target trajectory (moving linearly)
-    target_initial_pos = [5.0, 5.0, 1.0]
-    target_velocity = [-1.0, -0.5, 0.0]
+    # Target trajectory (stationary target - fixed point)
+    target_position = [5.0, 5.0, 1.5]
     
-    target_traj = LinearTargetTrajectory(target_initial_pos, target_velocity)
+    # Create target trajectory using DiscreteTrajectory with waypoints
+    # Use a reasonable duration for the drone to reach the target
+    estimated_distance = np.linalg.norm(np.array(target_position) - initial_pos)
+    estimated_duration = estimated_distance / 3.0  # Assume average speed of 3 m/s
+    estimated_duration = max(5.0, estimated_duration)  # At least 5 seconds for safety
     
-    print(f"\nTarget Trajectory:")
-    print(f"  Initial Position: {target_initial_pos}")
-    print(f"  Velocity: {target_velocity}")
+    target_traj = create_stationary_target_trajectory(
+        target_position, 
+        estimated_duration,
+        num_waypoints=50
+    )
+    
+    print(f"\nTarget Trajectory (Stationary):")
+    print(f"  Position: {target_position}")
+    print(f"  Velocity: [0.0, 0.0, 0.0]")
+    print(f"  Total Duration: {target_traj.getTotalDuration():.3f} s")
     print(f"  Position at t=0: {target_traj.getPosition(0.0)}")
-    print(f"  Position at t=3: {target_traj.getPosition(3.0)}")
+    print(f"  Position at t={estimated_duration:.1f}: {target_traj.getPosition(estimated_duration)}")
     
     # ---- Create and Configure Optimizer ----
     optimizer = catching.SimpleCatching()
@@ -82,7 +139,7 @@ def main():
     
     # Set optimization weights
     optimizer.setOptimizationWeights(
-        time_weight=1.0,
+        time_weight=5.0,  # Reduced to allow longer trajectories
         position_weight=100.0,
         velocity_weight=10.0,
         acceleration_weight=1.0,
@@ -95,7 +152,7 @@ def main():
     # Set trajectory parameters
     optimizer.setTrajectoryParams(
         integration_steps=20,
-        traj_pieces_num=3,  # Use 3 pieces for better path quality
+        traj_pieces_num=3,  # Use 3 pieces for simpler initial test
         time_var_dim=1,
         custom_var_num=0
     )

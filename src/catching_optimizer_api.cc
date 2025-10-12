@@ -10,43 +10,9 @@
 #include <memory>
 
 #include "simple_catching.h"
+#include "simple_trajectory.h"
 
 namespace py = pybind11;
-
-// Helper class to wrap SimpleTrajectory for Python use
-// FIXME: since the SimpleTrajectory is an abstract base class, you might need to consider using DiscreteTrajectory, the derived class of it. After you resolve the issue, you can remove this comment.
-class PySimpleTrajectory : public SimpleTrajectory {
-public:
-    using SimpleTrajectory::SimpleTrajectory;
-    
-    // Override pure virtual functions with trampoline class pattern
-    Eigen::Vector3d getPosition(double t) override {
-        PYBIND11_OVERLOAD_PURE(
-            Eigen::Vector3d,
-            SimpleTrajectory,
-            getPosition,
-            t
-        );
-    }
-    
-    Eigen::Vector3d getVelocity(double t) override {
-        PYBIND11_OVERLOAD_PURE(
-            Eigen::Vector3d,
-            SimpleTrajectory,
-            getVelocity,
-            t
-        );
-    }
-    
-    Eigen::Vector3d getAcceleration(double t) override {
-        PYBIND11_OVERLOAD_PURE(
-            Eigen::Vector3d,
-            SimpleTrajectory,
-            getAcceleration,
-            t
-        );
-    }
-};
 
 PYBIND11_MODULE(catching_optimizer_py, m) {
     m.doc() = "Python bindings for SimpleCatching trajectory optimization for target interception";
@@ -99,8 +65,7 @@ PYBIND11_MODULE(catching_optimizer_py, m) {
              py::arg("junction_index"));
 
     // Bind SimpleTrajectory abstract base class
-    py::class_<SimpleTrajectory, PySimpleTrajectory, std::shared_ptr<SimpleTrajectory>>(m, "SimpleTrajectory")
-        .def(py::init<>(), "Default constructor")
+    py::class_<SimpleTrajectory, std::shared_ptr<SimpleTrajectory>>(m, "SimpleTrajectory")
         .def("getPosition", &SimpleTrajectory::getPosition,
              "Get target position at time t",
              py::arg("t"))
@@ -109,7 +74,39 @@ PYBIND11_MODULE(catching_optimizer_py, m) {
              py::arg("t"))
         .def("getAcceleration", &SimpleTrajectory::getAcceleration,
              "Get target acceleration at time t",
-             py::arg("t"));
+             py::arg("t"))
+        .def("getTotalDuration", &SimpleTrajectory::getTotalDuration,
+             "Get total duration of the trajectory");
+
+    // Bind DiscreteTrajectory::StateWaypoint nested struct
+    py::class_<DiscreteTrajectory::StateWaypoint>(m, "StateWaypoint")
+        .def(py::init<>(), "Default constructor")
+        .def_readwrite("timestamp", &DiscreteTrajectory::StateWaypoint::timestamp,
+                      "Time stamp of this waypoint")
+        .def_readwrite("position", &DiscreteTrajectory::StateWaypoint::position,
+                      "Position at this waypoint")
+        .def_readwrite("velocity", &DiscreteTrajectory::StateWaypoint::velocity,
+                      "Velocity at this waypoint")
+        .def_readwrite("acceleration", &DiscreteTrajectory::StateWaypoint::acceleration,
+                      "Acceleration at this waypoint");
+
+    // Bind DiscreteTrajectory concrete class
+    py::class_<DiscreteTrajectory, SimpleTrajectory, std::shared_ptr<DiscreteTrajectory>>(m, "DiscreteTrajectory")
+        .def(py::init<>(), "Default constructor")
+        .def("addWaypoint", &DiscreteTrajectory::addWaypoint,
+             "Add a waypoint to the trajectory",
+             py::arg("waypoint"))
+        .def("getPosition", &DiscreteTrajectory::getPosition,
+             "Get position at time t",
+             py::arg("t"))
+        .def("getVelocity", &DiscreteTrajectory::getVelocity,
+             "Get velocity at time t",
+             py::arg("t"))
+        .def("getAcceleration", &DiscreteTrajectory::getAcceleration,
+             "Get acceleration at time t",
+             py::arg("t"))
+        .def("getTotalDuration", &DiscreteTrajectory::getTotalDuration,
+             "Get total duration of the trajectory");
 
     // Bind DroneState structure
     py::class_<DroneState>(m, "DroneState")
