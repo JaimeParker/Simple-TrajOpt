@@ -173,6 +173,56 @@ class SimpleTrajOpt {
 
     virtual bool generateTrajectory(const DroneState& initial_state, Trajectory& trajectory) = 0;
 
+    static Eigen::Quaterniond euler2Quaternion(const Eigen::Vector3d &euler) {
+        return Eigen::AngleAxisd(euler[2], Eigen::Vector3d::UnitZ()) *
+            Eigen::AngleAxisd(euler[1], Eigen::Vector3d::UnitY()) *
+            Eigen::AngleAxisd(euler[0], Eigen::Vector3d::UnitX());
+    }
+
+    static void q2EulerAngle(const Eigen::Quaterniond &q, Eigen::Vector3d &euler) {
+        double sr_cp = 2.0 * (q.w() * q.x() + q.y() * q.z());
+        double cr_cp = 1.0 - 2.0 * (q.x() * q.x() + q.y() * q.y());
+        euler[0] = atan2(sr_cp, cr_cp);
+
+        double sin_p = 2.0 * (q.w() * q.y() - q.z() * q.x());
+        if (fabs(sin_p) >= 1)
+            euler[1] = copysign(M_PI / 2, sin_p);  // pi/2
+        else
+            euler[1] = asin(sin_p);
+
+        double sy_cp = 2.0 * (q.w() * q.z() + q.x() * q.y());
+        double cy_cp = 1.0 - 2.0 * (q.y() * q.y() + q.z() * q.z());
+        euler[2] = atan2(sy_cp, cy_cp);
+    }
+
+    static Eigen::Matrix3d rotB2A(const Eigen::Vector3d &att) {
+        double phi = att[0];
+        double theta = att[1];
+
+        Eigen::Matrix3d rotation_matrix;
+        rotation_matrix << 1, tan(theta) * sin(phi), tan(theta) * cos(phi),
+                        0, cos(phi), -sin(phi),
+                        0, sin(phi) / (cos(theta) + 1e-8), cos(phi) / (cos(theta) + 1e-8);
+
+        return rotation_matrix;
+    }
+
+    static Eigen::Matrix3d rotB2ody2World(const Eigen::Vector3d &att) {
+        double s_phi = sin(att[0]);
+        double c_phi = cos(att[0]);
+        double s_theta = sin(att[1]);
+        double c_theta = cos(att[1]);
+        double s_psi = sin(att[2]);
+        double c_psi = cos(att[2]);
+
+        Eigen::Matrix3d rot_mat;
+        rot_mat << c_theta * c_psi, s_theta * s_phi * c_psi - s_psi * c_phi, s_theta * c_phi * c_psi + s_psi * s_phi,
+                c_theta * s_psi, s_psi * s_theta * s_phi + c_psi * c_phi, s_psi * s_theta * c_phi - c_psi * s_phi,
+                -s_theta, s_phi * c_theta, c_phi * c_theta;
+
+        return rot_mat;
+    }
+
    protected:
     // --- PURE VIRTUAL ---
     // virtual DroneState computeFinalState(const double* vars, double total_duration) = 0;
