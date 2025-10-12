@@ -84,7 +84,6 @@ struct TrajOptParameters {
     int lbfgs_line_search_type = 0;
 };
 
-
 struct BaseComputeParams {
     virtual ~BaseComputeParams() = default;
 };
@@ -521,4 +520,17 @@ class SimpleTrajOpt {
     int iteration_count_ = 0;
     double log_time_var_ = 0.0;
     double optimized_total_duration_ = 0.0;
+};
+
+
+class SimpleTrajectory {
+public:
+    // Virtual destructor for proper inheritance
+    virtual ~SimpleTrajectory() = default;
+
+    // Pure virtual functions to get the target's state at any time 't'
+    // TODO: realize these functions in base class, and allow derived classes to override if needed
+    virtual Eigen::Vector3d getPosition(double t);
+    virtual Eigen::Vector3d getVelocity(double t);
+    virtual Eigen::Vector3d getAcceleration(double t);
 };
