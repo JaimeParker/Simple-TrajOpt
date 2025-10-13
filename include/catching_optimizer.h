@@ -16,6 +16,81 @@
 #include "minco.hpp"
 #include "poly_traj_utils.hpp"
 #include "traj_opt.h"
+#include "simple_trajectory.h"
+
+struct DroneState {
+    Eigen::Vector3d position;
+    Eigen::Vector3d velocity;
+    Eigen::Vector3d acceleration;
+    Eigen::Vector3d jerk;
+    Eigen::Vector4d attitude_quat;  // [w, x, y, z]
+    Eigen::Vector3d attitude;
+    Eigen::Vector3d body_rate;
+
+    DroneState() {
+        position.setZero();
+        velocity.setZero();
+        acceleration.setZero();
+        jerk.setZero();
+        attitude.setZero();
+        body_rate.setZero();
+        attitude_quat << 1.0, 0.0, 0.0, 0.0;
+    }
+
+    DroneState(const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& acc) {
+        position = pos;
+        velocity = vel;
+        acceleration = acc;
+        jerk.setZero();
+        attitude.setZero();
+        body_rate.setZero();
+        attitude_quat << 1.0, 0.0, 0.0, 0.0;
+    }
+};
+
+struct TrajOptParameters {
+    // Dynamic Limits
+    double max_velocity = 10.0;
+    double max_acceleration = 10.0;
+    double max_thrust = 20.0;
+    double min_thrust = 2.0;
+    double max_body_rate = 3.0;
+    double max_yaw_rate = 2.0;
+    double thrust_half_level = -1.0;
+    double thrust_half_range = -1.0;
+    double min_z = 0.4;
+
+    // Optimization Weights
+    double time_weight = 1.0;
+    double pos_penalty_weight = 100.0;
+    double vel_penalty_weight = 10.0;
+    double acc_penalty_weight = 1.0;
+    double thrust_weight = 1.0;
+    double body_rate_weight = 1.0;
+    double collision_weight = 1.0;
+    double terminal_pos_weight = 1.0;
+    double terminal_vel_weight = 1.0;
+    double terminal_acc_weight = 1.0;
+    double terminal_att_weight = 1.0;
+
+    // Numerical Parameters
+    int integration_steps = 20;
+    int traj_pieces_num = 1;
+    int time_var_dim = 1;
+    int waypoint_num = 1;
+    int custom_var_dim = 3;
+
+    // Environmental Parameters
+    Eigen::Vector3d gravity_vec = Eigen::Vector3d(0.0, 0.0, -9.81);
+
+    // LBFGS Parameters
+    int lbfgs_mem_size = 32;
+    int lbfgs_past = 3;
+    double lbfgs_g_epsilon = 0.0;
+    double lbfgs_min_step = 1e-16;
+    double lbfgs_delta = 1e-4;
+    int lbfgs_line_search_type = 0;
+};
 
 class CatchingOptimizer {
    public:
@@ -28,6 +103,8 @@ class CatchingOptimizer {
     }
 
     bool generateTrajectory(const DroneState& initial_state, Trajectory& trajectory) {
+        // TODO: implement trajectory generation
+        return true;
     }
 
    private:
@@ -46,8 +123,8 @@ class CatchingOptimizer {
         double grad_time = 0.0;
         double integration_weight = 0.0;
 
-        int inner_loop = integration_steps_ + 1;
-        step = minco_optimizer_.t(1) / integration_steps_;
+        int inner_loop = params_.integration_steps + 1;
+        step = minco_optimizer_.t(1) / params_.integration_steps;
 
         sigma1 = 0.0;
 
@@ -63,10 +140,10 @@ class CatchingOptimizer {
             beta2 << 0.0, 0.0, 2.0, 6.0 * sigma1, 12.0 * sigma2, 20.0 * sigma3, 30.0 * sigma4, 42.0 * sigma5;
             beta3 << 0.0, 0.0, 0.0, 6.0, 24.0 * sigma1, 60.0 * sigma2, 120.0 * sigma3, 210.0 * sigma4;
             beta4 << 0.0, 0.0, 0.0, 0.0, 24.0, 120.0 * sigma1, 360.0 * sigma2, 840.0 * sigma3;
-            alpha = 1.0 / integration_steps_ * j;
+            alpha = 1.0 / params_.integration_steps * j;
             integration_weight = (j == 0 || j == inner_loop - 1) ? 0.5 : 1.0;
 
-            for (int i = 0; i < num_pieces_; ++i) {
+            for (int i = 0; i < params_.traj_pieces_num; ++i) {
                 const auto& coeff_block = minco_optimizer_.c.block<8, 3>(i * 8, 0);
 
                 pos = coeff_block.transpose() * beta0;
@@ -110,8 +187,10 @@ class CatchingOptimizer {
                 }
 
                 double duration_to_now = (i + alpha) * minco_optimizer_.t(1);
-                Eigen::Vector3d car_pos = target_pos_ + target_vel_ * duration_to_now;
-                if (computePerchingCollisionCost(pos, acc, car_pos,
+                // TODO: rename car related variables to target
+                target_pos_ = target_traj_->getPosition(duration_to_now);
+                target_vel_ = target_traj_->getVelocity(duration_to_now);
+                if (computePerchingCollisionCost(pos, acc, target_pos_,
                                                  grad_temp_pos, grad_temp_acc, grad_temp_car,
                                                  cost_temp)) {
                     grad_pos_total += grad_temp_pos;
@@ -131,7 +210,7 @@ class CatchingOptimizer {
                 grad_time += grad_car_time;
 
                 minco_optimizer_.gdC.block<8, 3>(i * 8, 0) += integration_weight * step * grad_coeff;
-                minco_optimizer_.gdT += integration_weight * (cost_inner / integration_steps_ + alpha * step * grad_time);
+                minco_optimizer_.gdT += integration_weight * (cost_inner / params_.integration_steps + alpha * step * grad_time);
                 minco_optimizer_.gdT += i * integration_weight * step * grad_car_time;
                 cost += integration_weight * step * cost_inner;
             }
@@ -141,12 +220,12 @@ class CatchingOptimizer {
 
     bool computeVelocityCost(const Eigen::Vector3d& velocity, Eigen::Vector3d& grad_velocity,
                              double& cost_velocity) const {
-        double velocity_penalty = velocity.squaredNorm() - max_vel_ * max_vel_;
+        double velocity_penalty = velocity.squaredNorm() - params_.max_velocity * params_.max_velocity;
         if (velocity_penalty > 0.0) {
             double gradient = 0.0;
             cost_velocity = smoothedL1(velocity_penalty, gradient);
-            grad_velocity = vel_w_ * gradient * 2.0 * velocity;
-            cost_velocity *= vel_w_;
+            grad_velocity = params_.vel_penalty_weight * gradient * 2.0 * velocity;
+            cost_velocity *= params_.vel_penalty_weight;
             return true;
         }
         return false;
@@ -158,21 +237,21 @@ class CatchingOptimizer {
         bool has_penalty = false;
         grad_acceleration.setZero();
         cost_acceleration = 0.0;
-        Eigen::Vector3d thrust = acceleration - gravity_vec_;
-
-        double max_penalty = thrust.squaredNorm() - max_thrust_ * max_thrust_;
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
+        
+        auto max_penalty = thrust.squaredNorm() - params_.max_thrust * params_.max_thrust;
         if (max_penalty > 0.0) {
             double gradient = 0.0;
-            cost_acceleration = thrust_w_ * smoothedL1(max_penalty, gradient);
-            grad_acceleration = thrust_w_ * 2.0 * gradient * thrust;
+            cost_acceleration = params_.thrust_weight * smoothedL1(max_penalty, gradient);
+            grad_acceleration = params_.thrust_weight * 2.0 * gradient * thrust;
             has_penalty = true;
         }
 
-        double min_penalty = min_thrust_ * min_thrust_ - thrust.squaredNorm();
+        double min_penalty = params_.min_thrust * params_.min_thrust - thrust.squaredNorm();
         if (min_penalty > 0.0) {
             double gradient = 0.0;
-            cost_acceleration = thrust_w_ * smoothedL1(min_penalty, gradient);
-            grad_acceleration = -thrust_w_ * 2.0 * gradient * thrust;
+            cost_acceleration = params_.thrust_weight * smoothedL1(min_penalty, gradient);
+            grad_acceleration = -params_.thrust_weight * 2.0 * gradient * thrust;
             has_penalty = true;
         }
 
@@ -184,10 +263,10 @@ class CatchingOptimizer {
                              Eigen::Vector3d& grad_acceleration,
                              Eigen::Vector3d& grad_jerk,
                              double& cost) {
-        Eigen::Vector3d thrust = acceleration - gravity_vec_;
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
         Eigen::Vector3d zb_dot = getNormalizationJacobian(thrust) * jerk;
         double body_rate_sq = zb_dot.squaredNorm();
-        double penalty = body_rate_sq - max_body_rate_ * max_body_rate_;
+        double penalty = body_rate_sq - params_.max_body_rate * params_.max_body_rate;
         if (penalty > 0.0) {
             double gradient = 0.0;
             cost = smoothedL1(penalty, gradient);
@@ -196,8 +275,8 @@ class CatchingOptimizer {
             grad_jerk = getNormalizationJacobian(thrust).transpose() * grad_zb_dot;
             grad_acceleration = getNormalizationHessian(thrust, jerk).transpose() * grad_zb_dot;
 
-            cost *= body_rate_w_;
-            gradient *= body_rate_w_;
+            cost *= params_.body_rate_weight;
+            gradient *= params_.body_rate_weight;
             grad_acceleration *= gradient;
             grad_jerk *= gradient;
 
@@ -227,9 +306,9 @@ class CatchingOptimizer {
         if (penalty > 0.0) {
             double gradient = 0.0;
             cost_position = smoothedL1(penalty, gradient);
-            cost_position *= pos_w_;
+            cost_position *= params_.pos_penalty_weight;
             grad_position.setZero();
-            grad_position.z() = -pos_w_ * gradient;
+            grad_position.z() = -params_.pos_penalty_weight * gradient;
             return true;
         }
         return false;
@@ -300,7 +379,7 @@ class CatchingOptimizer {
         Eigen::Vector3d plane_normal = -landing_att_z_vec_;
         double plane_offset = plane_normal.dot(car_position);
 
-        Eigen::Vector3d thrust = acceleration - gravity_vec_;
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
         Eigen::Vector3d body_z_vec = normalizeVector(thrust);
 
         Eigen::Matrix<double, 2, 3> matrix_btrt;
@@ -371,10 +450,10 @@ class CatchingOptimizer {
             grad_acceleration *= gradient;
             grad_car_position = gradient * grad_car_position + grad_car_position_distance;
 
-            cost *= perching_collision_w_;
-            grad_position *= perching_collision_w_;
-            grad_acceleration *= perching_collision_w_;
-            grad_car_position *= perching_collision_w_;
+            cost *= params_.collision_weight;
+            grad_position *= params_.collision_weight;
+            grad_acceleration *= params_.collision_weight;
+            grad_car_position *= params_.collision_weight;
 
             return true;
         }
@@ -393,7 +472,7 @@ class CatchingOptimizer {
         Eigen::Vector3d plane_normal = -landing_att_z_vec_;
         double plane_offset = plane_normal.dot(car_position);
 
-        Eigen::Vector3d thrust = acceleration - gravity_vec_;
+        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
         Eigen::Vector3d body_z_vec = normalizeVector(thrust);
 
         Eigen::Matrix<double, 2, 3> matrix_btrt;
@@ -428,14 +507,14 @@ class CatchingOptimizer {
         const double& log_time_var = vars[0];
         double& grad_log_time = grads[0];
 
-        Eigen::Map<const Eigen::MatrixXd> intermediate_waypoints(vars + optimizer->time_var_dim_, 3, optimizer->waypoint_dim_);
-        Eigen::Map<Eigen::MatrixXd> grad_intermediate_waypoints(grads + optimizer->time_var_dim_, 3, optimizer->waypoint_dim_);
+        Eigen::Map<const Eigen::MatrixXd> intermediate_waypoints(vars + optimizer->params_.time_var_dim, 3, optimizer->params_.waypoint_num);
+        Eigen::Map<Eigen::MatrixXd> grad_intermediate_waypoints(grads + optimizer->params_.time_var_dim, 3, optimizer->params_.waypoint_num);
 
-        const double& tail_angle = vars[optimizer->time_var_dim_ + optimizer->waypoint_dim_ * 3];
-        double& grad_tail_angle = grads[optimizer->time_var_dim_ + optimizer->waypoint_dim_ * 3];
+        const double& tail_angle = vars[optimizer->params_.time_var_dim + optimizer->params_.waypoint_num * 3];
+        double& grad_tail_angle = grads[optimizer->params_.time_var_dim + optimizer->params_.waypoint_num * 3];
 
-        Eigen::Map<const Eigen::Vector2d> tail_velocity_params(vars + optimizer->time_var_dim_ + optimizer->waypoint_dim_ * 3 + 1);
-        Eigen::Map<Eigen::Vector2d> grad_tail_velocity_params(grads + optimizer->time_var_dim_ + optimizer->waypoint_dim_ * 3 + 1);
+        Eigen::Map<const Eigen::Vector2d> tail_velocity_params(vars + optimizer->params_.time_var_dim + optimizer->params_.waypoint_num * 3 + 1);
+        Eigen::Map<Eigen::Vector2d> grad_tail_velocity_params(grads + optimizer->params_.time_var_dim + optimizer->params_.waypoint_num * 3 + 1);
 
         double piece_duration = expC2(log_time_var);
         Eigen::Vector3d tail_velocity;
@@ -446,12 +525,11 @@ class CatchingOptimizer {
                             tail_velocity);
 
         Eigen::MatrixXd tail_state(3, 4);
-        tail_state.col(0) = optimizer->target_pos_ + optimizer->target_vel_ * optimizer->num_pieces_ * piece_duration +
+        tail_state.col(0) = optimizer->target_pos_ + optimizer->target_vel_ * optimizer->params_.traj_pieces_num * piece_duration +
                             optimizer->landing_att_z_vec_ * optimizer->tail_length_;
         tail_state.col(1) = tail_velocity;
-        tail_state.col(2) = forwardThrust(tail_angle, optimizer->thrust_half_range_, optimizer->thrust_mid_level_) *
-                                optimizer->landing_att_z_vec_ +
-                            optimizer->gravity_vec_;
+        tail_state.col(2) = forwardThrust(tail_angle, optimizer->params_.thrust_half_range, optimizer->params_.thrust_half_level) *
+                            optimizer->landing_att_z_vec_ + optimizer->params_.gravity_vec;
         tail_state.col(3).setZero();
 
         auto tic = std::chrono::steady_clock::now();
@@ -473,22 +551,22 @@ class CatchingOptimizer {
         toc = std::chrono::steady_clock::now();
         optimizer->inner_loop_duration_ += (toc - tic).count();
 
-        optimizer->minco_optimizer_.gdT += optimizer->minco_optimizer_.gdTail.col(0).dot(optimizer->num_pieces_ * optimizer->target_vel_);
+        optimizer->minco_optimizer_.gdT += optimizer->minco_optimizer_.gdTail.col(0).dot(optimizer->params_.traj_pieces_num * optimizer->target_vel_);
         Eigen::Vector3d grad_tail_velocity = optimizer->minco_optimizer_.gdTail.col(1);
         double thrust_gradient = optimizer->minco_optimizer_.gdTail.col(2).dot(optimizer->landing_att_z_vec_);
-        grad_tail_angle = propagateThrustGradient(tail_angle, thrust_gradient, optimizer->thrust_half_range_);
+        grad_tail_angle = propagateThrustGradient(tail_angle, thrust_gradient, optimizer->params_.thrust_half_range);
 
         grad_tail_velocity_params.setZero();
-        if (optimizer->tail_velocity_w_ > -1.0) {
+        if (optimizer->params_.terminal_vel_weight > -1.0) {
             grad_tail_velocity_params.x() = grad_tail_velocity.dot(optimizer->landing_basis_x_);
             grad_tail_velocity_params.y() = grad_tail_velocity.dot(optimizer->landing_basis_y_);
             double tail_velocity_norm_sq = tail_velocity_params.squaredNorm();
-            cost += optimizer->tail_velocity_w_ * tail_velocity_norm_sq;
-            grad_tail_velocity_params += optimizer->tail_velocity_w_ * 2.0 * tail_velocity_params;
+            cost += optimizer->params_.terminal_vel_weight * tail_velocity_norm_sq;
+            grad_tail_velocity_params += optimizer->params_.terminal_vel_weight * 2.0 * tail_velocity_params;
         }
 
-        optimizer->minco_optimizer_.gdT += optimizer->time_w_;
-        cost += optimizer->time_w_ * piece_duration;
+        optimizer->minco_optimizer_.gdT += optimizer->params_.time_weight;
+        cost += optimizer->params_.time_weight * piece_duration;
         grad_log_time = optimizer->minco_optimizer_.gdT * gradTimeTransform(log_time_var);
 
         // FIXME: this variable seems not accessed?
@@ -498,7 +576,7 @@ class CatchingOptimizer {
     }
 
     DroneState initial_state_;
-    // optimizer
+    
     TrajOptParameters params_;
     minco::MINCO_S4_Uniform minco_optimizer_;
     lbfgs::lbfgs_parameter_t lbfgs_params_;
@@ -507,6 +585,23 @@ class CatchingOptimizer {
     int iteration_count_ = 0;
     double log_time_var_ = 0.0;
     double optimized_total_duration_ = 0.0;
+    double inner_loop_duration_ = 0.0;
+    double integral_duration_ = 0.0;
+
+    std::shared_ptr<SimpleTrajectory> target_traj_;
+
+    Eigen::Vector3d target_pos_;
+    Eigen::Vector3d target_vel_;
+
+    Eigen::Vector3d landing_att_z_vec_;
+    Eigen::Vector3d landing_basis_x_;
+    Eigen::Vector3d landing_basis_y_;
+    Eigen::Vector3d landing_vel_;
+    double body_radius_ = 0.1;
+    double platform_radius_ = 0.3;
+    double tail_length_ = 0.3;
+
+    Eigen::MatrixXd initial_state_matrix_;
 
     /* Static private helper functions */
     static void solveBoundaryValueProblem(double duration,
@@ -742,7 +837,15 @@ class CatchingOptimizer {
         params_.custom_var_dim = custom_var_num;
     }
 
-    void setInitialState(const DroneState& initial_state) { initial_state_ = initial_state; }
+    void setInitialState(const DroneState& initial_state) {
+         initial_state_ = initial_state;
+
+         initial_state_matrix_.col(0) = initial_state_.position;
+         initial_state_matrix_.col(1) = initial_state_.velocity;
+         initial_state_matrix_.col(2) = initial_state_.acceleration;
+         initial_state_matrix_.col(3) = initial_state_.jerk;
+    }
+
     int getIterationCount() const { return iteration_count_; }
     Trajectory getCurrentTrajectory() const { return minco_optimizer_.getTraj(); }
 
@@ -795,80 +898,6 @@ class CatchingOptimizer {
 
         return rot_mat;
     }
-};
-
-struct DroneState {
-    Eigen::Vector3d position;
-    Eigen::Vector3d velocity;
-    Eigen::Vector3d acceleration;
-    Eigen::Vector3d jerk;
-    Eigen::Vector4d attitude_quat;  // [w, x, y, z]
-    Eigen::Vector3d attitude;
-    Eigen::Vector3d body_rate;
-
-    DroneState() {
-        position.setZero();
-        velocity.setZero();
-        acceleration.setZero();
-        jerk.setZero();
-        attitude.setZero();
-        body_rate.setZero();
-        attitude_quat << 1.0, 0.0, 0.0, 0.0;
-    }
-
-    DroneState(const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& acc) {
-        position = pos;
-        velocity = vel;
-        acceleration = acc;
-        jerk.setZero();
-        attitude.setZero();
-        body_rate.setZero();
-        attitude_quat << 1.0, 0.0, 0.0, 0.0;
-    }
-};
-
-struct TrajOptParameters {
-    // Dynamic Limits
-    double max_velocity = 10.0;
-    double max_acceleration = 10.0;
-    double max_thrust = 20.0;
-    double min_thrust = 2.0;
-    double max_body_rate = 3.0;
-    double max_yaw_rate = 2.0;
-    double thrust_half_level = -1.0;
-    double thrust_half_range = -1.0;
-    double min_z = 0.4;
-
-    // Optimization Weights
-    double time_weight = 1.0;
-    double pos_penalty_weight = 100.0;
-    double vel_penalty_weight = 10.0;
-    double acc_penalty_weight = 1.0;
-    double thrust_weight = 1.0;
-    double body_rate_weight = 1.0;
-    double collision_weight = 1.0;
-    double terminal_pos_weight = 1.0;
-    double terminal_vel_weight = 1.0;
-    double terminal_acc_weight = 1.0;
-    double terminal_att_weight = 1.0;
-
-    // Numerical Parameters
-    int integration_steps = 20;
-    int traj_pieces_num = 1;
-    int time_var_dim = 1;
-    int waypoint_num = 1;
-    int custom_var_dim = 3;
-
-    // Environmental Parameters
-    Eigen::Vector3d gravity_vec = Eigen::Vector3d(0.0, 0.0, -9.81);
-
-    // LBFGS Parameters
-    int lbfgs_mem_size = 32;
-    int lbfgs_past = 3;
-    double lbfgs_g_epsilon = 0.0;
-    double lbfgs_min_step = 1e-16;
-    double lbfgs_delta = 1e-4;
-    int lbfgs_line_search_type = 0;
 };
 
 #endif /* CATCHING_OPTIMIZER_H */
