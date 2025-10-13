@@ -315,18 +315,18 @@ class SimpleTrajOpt {
                                      double* grads,
                                      int n) = 0;
 
-    virtual void computeVelocityCost(const Eigen::Vector3d& velocity,
+    virtual bool computeVelocityCost(const Eigen::Vector3d& velocity,
                                      Eigen::Vector3d& grad_velocity,
                                      double& cost_velocity) {
-        double vel_penalty = velocity.squaredNorm() - params_.max_velocity * params_.max_velocity;
-        if (vel_penalty > 0.0) {
-            double smoothed_grad = 0.0;
-            cost_velocity = smoothedL1(vel_penalty, smoothed_grad) * params_.vel_penalty_weight;
-            grad_velocity = 2.0 * velocity * smoothed_grad * params_.vel_penalty_weight;
-        } else {
-            cost_velocity = 0.0;
-            grad_velocity.setZero();
+        double velocity_penalty = velocity.squaredNorm() - params_.max_velocity * params_.max_velocity;
+        if (velocity_penalty > 0.0) {
+            double gradient = 0.0;
+            cost_velocity = smoothedL1(velocity_penalty, gradient);
+            grad_velocity = params_.vel_penalty_weight * gradient * 2.0 * velocity;
+            cost_velocity *= params_.vel_penalty_weight;
+            return true;
         }
+        return false;
     }
 
     virtual void computeAccelerationCost(const Eigen::Vector3d& acceleration,

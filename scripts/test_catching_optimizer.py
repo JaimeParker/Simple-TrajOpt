@@ -127,27 +127,28 @@ def main():
     # ---- Create and Configure Optimizer ----
     optimizer = catching.SimpleCatching()
     
+    # Use default parameters
     # Set dynamic limits
-    optimizer.setDynamicLimits(
-        max_velocity=10.0,
-        max_acceleration=10.0,
-        max_thrust=20.0,
-        min_thrust=2.0,
-        max_body_rate=3.0,
-        max_yaw_body_rate=2.0
-    )
+    # optimizer.setDynamicLimits(
+    #     max_velocity=10.0,
+    #     max_acceleration=10.0,
+    #     max_thrust=20.0,
+    #     min_thrust=2.0,
+    #     max_body_rate=3.0,
+    #     max_yaw_body_rate=2.0
+    # )
     
     # Set optimization weights
-    optimizer.setOptimizationWeights(
-        time_weight=5.0,  # Reduced to allow longer trajectories
-        position_weight=100.0,
-        velocity_weight=10.0,
-        acceleration_weight=1.0,
-        thrust_weight=1.0,
-        body_rate_weight=1.0,
-        terminal_velocity_weight=-1.0,
-        collision_weight=1.0
-    )
+    # optimizer.setOptimizationWeights(
+    #     time_weight=5.0,  # Reduced to allow longer trajectories
+    #     position_weight=100.0,
+    #     velocity_weight=10.0,
+    #     acceleration_weight=1.0,
+    #     thrust_weight=1.0,
+    #     body_rate_weight=1.0,
+    #     terminal_velocity_weight=-1.0,
+    #     collision_weight=1.0
+    # )
     
     # Set trajectory parameters
     optimizer.setTrajectoryParams(
