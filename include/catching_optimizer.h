@@ -110,7 +110,7 @@ class CatchingOptimizer {
    private:
     void addTimeIntegralPenalty(double& cost) {
         Eigen::Vector3d pos, vel, acc, jer, snap;
-        Eigen::Vector3d grad_temp_pos, grad_temp_vel, grad_temp_acc, grad_temp_jer, grad_temp_car;
+        Eigen::Vector3d grad_temp_pos, grad_temp_vel, grad_temp_acc, grad_temp_jer, grad_temp_target;
         Eigen::Vector3d grad_pos_total, grad_vel_total, grad_acc_total, grad_jer_total;
         double cost_temp = 0.0;
         double cost_inner = 0.0;
@@ -156,7 +156,7 @@ class CatchingOptimizer {
                 grad_vel_total.setZero();
                 grad_acc_total.setZero();
                 grad_jer_total.setZero();
-                grad_temp_car.setZero();
+                grad_temp_target.setZero();
                 cost_inner = 0.0;
 
                 if (computeFloorCost(pos, grad_temp_pos, cost_temp)) {
@@ -187,17 +187,16 @@ class CatchingOptimizer {
                 }
 
                 double duration_to_now = (i + alpha) * minco_optimizer_.t(1);
-                // TODO: rename car related variables to target
                 target_pos_ = target_traj_->getPosition(duration_to_now);
                 target_vel_ = target_traj_->getVelocity(duration_to_now);
                 if (computePerchingCollisionCost(pos, acc, target_pos_,
-                                                 grad_temp_pos, grad_temp_acc, grad_temp_car,
+                                                 grad_temp_pos, grad_temp_acc, grad_temp_target,
                                                  cost_temp)) {
                     grad_pos_total += grad_temp_pos;
                     grad_acc_total += grad_temp_acc;
                     cost_inner += cost_temp;
                 }
-                double grad_car_time = grad_temp_car.dot(target_vel_);
+                double grad_target_time = grad_temp_target.dot(target_vel_);
 
                 grad_coeff = beta0 * grad_pos_total.transpose();
                 grad_time = grad_pos_total.transpose() * vel;
@@ -207,11 +206,11 @@ class CatchingOptimizer {
                 grad_time += grad_acc_total.transpose() * jer;
                 grad_coeff += beta3 * grad_jer_total.transpose();
                 grad_time += grad_jer_total.transpose() * snap;
-                grad_time += grad_car_time;
+                grad_time += grad_target_time;
 
                 minco_optimizer_.gdC.block<8, 3>(i * 8, 0) += integration_weight * step * grad_coeff;
                 minco_optimizer_.gdT += integration_weight * (cost_inner / params_.integration_steps + alpha * step * grad_time);
-                minco_optimizer_.gdT += i * integration_weight * step * grad_car_time;
+                minco_optimizer_.gdT += i * integration_weight * step * grad_target_time;
                 cost += integration_weight * step * cost_inner;
             }
             sigma1 += step;
@@ -355,14 +354,14 @@ class CatchingOptimizer {
 
     bool computePerchingCollisionCost(const Eigen::Vector3d& position,
                                       const Eigen::Vector3d& acceleration,
-                                      const Eigen::Vector3d& car_position,
+                                      const Eigen::Vector3d& target_position,
                                       Eigen::Vector3d& grad_position,
                                       Eigen::Vector3d& grad_acceleration,
-                                      Eigen::Vector3d& grad_car_position,
+                                      Eigen::Vector3d& grad_target_position,
                                       double& cost) {
         static double eps = 1e-6;
 
-        double distance_sq = (position - car_position).squaredNorm();
+        double distance_sq = (position - target_position).squaredNorm();
         double safe_radius = platform_radius_ + body_radius_;
         double safe_radius_sq = safe_radius * safe_radius;
         double penalty_distance = safe_radius_sq - distance_sq;
@@ -373,11 +372,11 @@ class CatchingOptimizer {
             return false;
         }
 
-        Eigen::Vector3d grad_position_distance = gradient_distance * 2.0 * (car_position - position);
-        Eigen::Vector3d grad_car_position_distance = -grad_position_distance;
+        Eigen::Vector3d grad_position_distance = gradient_distance * 2.0 * (target_position - position);
+        Eigen::Vector3d grad_target_position_distance = -grad_position_distance;
 
         Eigen::Vector3d plane_normal = -landing_att_z_vec_;
-        double plane_offset = plane_normal.dot(car_position);
+        double plane_offset = plane_normal.dot(target_position);
 
         Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
         Eigen::Vector3d body_z_vec = normalizeVector(thrust);
@@ -406,7 +405,7 @@ class CatchingOptimizer {
             cost = smoothedL1(penalty, gradient);
 
             grad_position = plane_normal;
-            grad_car_position = -plane_normal;
+            grad_target_position = -plane_normal;
             Eigen::Vector2d grad_v2 = body_radius_ * v2 / v2_norm;
 
             Eigen::Matrix<double, 2, 3> dM_dax, dM_day, dM_daz;
@@ -444,16 +443,16 @@ class CatchingOptimizer {
 
             gradient *= smoothing;
             grad_position_distance *= cost;
-            grad_car_position_distance *= cost;
+            grad_target_position_distance *= cost;
             cost *= smoothing;
             grad_position = gradient * grad_position + grad_position_distance;
             grad_acceleration *= gradient;
-            grad_car_position = gradient * grad_car_position + grad_car_position_distance;
+            grad_target_position = gradient * grad_target_position + grad_target_position_distance;
 
             cost *= params_.collision_weight;
             grad_position *= params_.collision_weight;
             grad_acceleration *= params_.collision_weight;
-            grad_car_position *= params_.collision_weight;
+            grad_target_position *= params_.collision_weight;
 
             return true;
         }
@@ -462,15 +461,15 @@ class CatchingOptimizer {
 
     bool checkCollision(const Eigen::Vector3d& position,
                         const Eigen::Vector3d& acceleration,
-                        const Eigen::Vector3d& car_position) {
-        if ((position - car_position).norm() > platform_radius_) {
+                        const Eigen::Vector3d& target_position) {
+        if ((position - target_position).norm() > platform_radius_) {
             return false;
         }
 
         static double eps = 1e-6;
 
         Eigen::Vector3d plane_normal = -landing_att_z_vec_;
-        double plane_offset = plane_normal.dot(car_position);
+        double plane_offset = plane_normal.dot(target_position);
 
         Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
         Eigen::Vector3d body_z_vec = normalizeVector(thrust);
