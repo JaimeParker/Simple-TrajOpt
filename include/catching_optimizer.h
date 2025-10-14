@@ -15,7 +15,6 @@
 #include "lbfgs_raw.hpp"
 #include "minco.hpp"
 #include "poly_traj_utils.hpp"
-#include "traj_opt.h"
 #include "simple_trajectory.h"
 
 struct DroneState {
@@ -23,7 +22,7 @@ struct DroneState {
     Eigen::Vector3d velocity;
     Eigen::Vector3d acceleration;
     Eigen::Vector3d jerk;
-    Eigen::Vector4d attitude_quat;  // [w, x, y, z]
+    Eigen::Quaterniond attitude_quat;
     Eigen::Vector3d attitude;
     Eigen::Vector3d body_rate;
 
@@ -34,7 +33,7 @@ struct DroneState {
         jerk.setZero();
         attitude.setZero();
         body_rate.setZero();
-        attitude_quat << 1.0, 0.0, 0.0, 0.0;
+        attitude_quat.setIdentity();
     }
 
     DroneState(const Eigen::Vector3d& pos, const Eigen::Vector3d& vel, const Eigen::Vector3d& acc) {
@@ -44,7 +43,7 @@ struct DroneState {
         jerk.setZero();
         attitude.setZero();
         body_rate.setZero();
-        attitude_quat << 1.0, 0.0, 0.0, 0.0;
+        attitude_quat.setIdentity();
     }
 };
 
@@ -102,12 +101,215 @@ class CatchingOptimizer {
         }
     }
 
-    bool generateTrajectory(const DroneState& initial_state, Trajectory& trajectory) {
+    bool generateTrajectory(Trajectory& trajectory) {
         // TODO: implement trajectory generation
+
+        // TODO: check, this should be done in function setTrajectoryParams
+        // num_pieces_ = num_pieces;
+        // time_var_dim_ = 1;
+        // waypoint_dim_ = num_pieces_ - 1;
+
+        // FIXME: we are refactoring the code, try to find params_.xxx to replace
+
+        const int variable_count = params_.time_var_dim + 3 * params_.waypoint_num + 1 + 2;
+        if (optimization_vars_ != nullptr) {
+            delete[] optimization_vars_;
+            optimization_vars_ = nullptr;
+        }
+        optimization_vars_ = new double[variable_count];
+
+        double& log_time_var = optimization_vars_[0];
+        Eigen::Map<Eigen::MatrixXd> intermediate_waypoints(optimization_vars_ + params_.time_var_dim, 3, params_.waypoint_num);
+        double& tail_angle = optimization_vars_[params_.time_var_dim + 3 * params_.waypoint_num];
+        Eigen::Map<Eigen::Vector2d> tail_velocity_params(optimization_vars_ + params_.time_var_dim + 3 * params_.waypoint_num + 1);
+
+        // TODO: check if the target info is set correctly, leave this commented code fot hint
+        // target_pos_ = target_pos;
+        // target_vel_ = target_vel;
+
+        // quaternionToZAxis(landing_quat, landing_att_z_vec_);
+        quaternionToZAxis(desired_terminal_state_.attitude_quat, landing_att_z_vec_);
+
+        // This was done in setDynamicLimits
+        // thrust_mid_level_ = (max_thrust_ + min_thrust_) / 2.0;
+        // thrust_half_range_ = (max_thrust_ - min_thrust_) / 2.0;
+
+        // TODO: I need to define the landing_vel_ sometimes, so add a setter for it
+        // use the refactored class DroneState to handle the landing info
+        // landing_vel_ = target_vel_;
+        desired_terminal_state_.velocity = target_vel_;
+
+        landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d(0.0, 0.0, 1.0));
+        if (landing_basis_x_.squaredNorm() == 0.0) {
+            landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d(0.0, 1.0, 0.0));
+        }
+        landing_basis_x_.normalize();
+        landing_basis_y_ = landing_att_z_vec_.cross(landing_basis_x_);
+        landing_basis_y_.normalize();
+
+        tail_velocity_params.setConstant(0.0);
+
+        // This was done in setInitialState
+        // initial_state_matrix_ = initial_state;
+
+        minco_optimizer_.reset(params_.traj_pieces_num);
+
+        tail_angle = 0.0;
+
+        // TODO: I need to rethink about the has_initial_guess_ logic
+        bool reuse_initial_guess = false;  // use it for now, remember to change it later
+
+        // bool reuse_initial_guess = has_initial_guess_ && replanning_time > 0.0 &&
+        //                            replanning_time < initial_trajectory_.getTotalDuration();
+
+        if (reuse_initial_guess) {
+            // double initial_total_duration = initial_trajectory_.getTotalDuration() - replanning_time;
+            // log_time_var = logC2(initial_total_duration / num_pieces_);
+
+            // for (int i = 1; i < num_pieces_; ++i) {
+            //     double segment_time = (static_cast<double>(i) / num_pieces_) * initial_total_duration;
+            //     intermediate_waypoints.col(i - 1) = initial_trajectory_.getPos(segment_time + replanning_time);
+            // }
+            // tail_angle = initial_tail_angle_;
+            // tail_velocity_params = initial_tail_velocity_params_;
+        } else {
+            // FIXME: we need to use the DroneState initial_state_ and desired_terminal_state_ here
+            // Eigen::MatrixXd initial_boundary = initial_state_matrix_;
+            // Eigen::MatrixXd final_boundary(3, 4);
+            // final_boundary.col(0) = target_pos_;
+            // final_boundary.col(1) = target_vel_;
+            // final_boundary.col(2) = forwardThrust(tail_angle, thrust_half_range_, thrust_mid_level_) * landing_att_z_vec_ + gravity_vec_;
+            // final_boundary.col(3).setZero();
+
+            desired_terminal_state_.position = target_pos_;
+            desired_terminal_state_.velocity = target_vel_;  // TODO: not the best way to set vel
+            desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
+            desired_terminal_state_.jerk.setZero();
+
+            // double boundary_duration = (final_boundary.col(0) - initial_boundary.col(0)).norm() / max_vel_;
+            double boundary_duration = (desired_terminal_state_.position - initial_state_.position).norm() / params_.max_velocity;
+
+            CoefficientMat coefficient_matrix;
+            double max_body_rate = 0.0;
+
+            do {
+                // TODO: is this a good way to search for a feasible trajectory?
+                boundary_duration += 1.0;
+                // TODO: desired_terminal_state_.position shoule be set according to the getPosition function using current duration
+                desired_terminal_state_.position = target_pos_ + target_vel_ * boundary_duration;
+                solveBoundaryValueProblem(boundary_duration, initial_state_, desired_terminal_state_, coefficient_matrix);
+                std::vector<double> durations{boundary_duration};
+                std::vector<CoefficientMat> coefficients{coefficient_matrix};
+                Trajectory boundary_traj(durations, coefficients);
+                max_body_rate = getMaxBodyRate(boundary_traj);
+            } while (max_body_rate > 1.5 * params_.max_body_rate);
+
+            Eigen::VectorXd polynomial_terms(8);
+            polynomial_terms(7) = 1.0;
+            for (int i = 1; i < params_.traj_pieces_num; ++i) {
+                double segment_time = (static_cast<double>(i) / params_.traj_pieces_num) * boundary_duration;
+                for (int j = 6; j >= 0; --j) {
+                    polynomial_terms(j) = polynomial_terms(j + 1) * segment_time;
+                }
+                intermediate_waypoints.col(i - 1) = coefficient_matrix * polynomial_terms;
+            }
+            log_time_var = logC2(boundary_duration / params_.traj_pieces_num);
+        }
+
+        lbfgs::lbfgs_parameter_t lbfgs_params{};
+        lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
+        lbfgs_params.mem_size = 32;
+        lbfgs_params.past = 3;
+        lbfgs_params.g_epsilon = 0.0;
+        lbfgs_params.min_step = 1e-16;
+        lbfgs_params.delta = 1e-4;
+        lbfgs_params.line_search_type = 0;
+
+        double min_objective = 0.0;
+        int optimization_result = 0;
+
+        inner_loop_duration_ = 0.0;
+        integral_duration_ = 0.0;
+
+        iteration_count_ = 0;
+
+        optimization_result = lbfgs::lbfgs_optimize(
+            variable_count,
+            optimization_vars_,
+            &min_objective,
+            &CatchingOptimizer::objectiveFunction,
+            nullptr,
+            &CatchingOptimizer::earlyExitCallback,
+            this,
+            &lbfgs_params);
+
+        if (optimization_result < 0) {
+            delete[] optimization_vars_;
+            optimization_vars_ = nullptr;
+            return false;
+        }
+
+        double piece_duration = expC2(log_time_var);
+        double total_duration = params_.traj_pieces_num * piece_duration;
+
+        Eigen::Vector3d tail_velocity;
+        computeTailVelocity(tail_velocity_params, landing_vel_, landing_basis_x_, landing_basis_y_, tail_velocity);
+
+        Eigen::MatrixXd terminal_state_matrix(3, 4);
+        terminal_state_matrix.col(0) = target_pos_ + target_vel_ * total_duration + landing_att_z_vec_ * tail_length_;
+        terminal_state_matrix.col(1) = tail_velocity;
+        terminal_state_matrix.col(2) = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
+        terminal_state_matrix.col(3).setZero();
+
+        minco_optimizer_.generate(initial_state_matrix_, terminal_state_matrix, intermediate_waypoints, piece_duration);
+        trajectory = minco_optimizer_.getTraj();
+
+        initial_trajectory_ = trajectory;
+        // Seems useless, comment it for now
+        // initial_tail_angle_ = tail_angle;
+        // initial_tail_velocity_params_ = tail_velocity_params;
+
+        delete[] optimization_vars_;
+        optimization_vars_ = nullptr;
+
         return true;
     }
 
    private:
+    /* states */
+    DroneState initial_state_;
+    Eigen::MatrixXd initial_state_matrix_;
+    DroneState desired_terminal_state_;
+
+    /* optimizer and params */
+    TrajOptParameters params_;
+    minco::MINCO_S4_Uniform minco_optimizer_;
+    lbfgs::lbfgs_parameter_t lbfgs_params_;
+
+    /* optimization vars */
+    double* optimization_vars_ = nullptr;
+    int iteration_count_ = 0;
+    double log_time_var_ = 0.0;
+    double optimized_total_duration_ = 0.0;
+    double inner_loop_duration_ = 0.0;
+    double integral_duration_ = 0.0;
+
+    /* target and initial guess */
+    std::shared_ptr<SimpleTrajectory> target_traj_;
+    Trajectory initial_trajectory_;
+
+    Eigen::Vector3d target_pos_;
+    Eigen::Vector3d target_vel_;
+
+    // TODO: these are old variables, may need to be removed
+    Eigen::Vector3d landing_att_z_vec_;
+    Eigen::Vector3d landing_basis_x_;
+    Eigen::Vector3d landing_basis_y_;
+    Eigen::Vector3d landing_vel_;
+    double body_radius_ = 0.1;
+    double platform_radius_ = 0.3;
+    double tail_length_ = 0.3;
+
     void addTimeIntegralPenalty(double& cost) {
         Eigen::Vector3d pos, vel, acc, jer, snap;
         Eigen::Vector3d grad_temp_pos, grad_temp_vel, grad_temp_acc, grad_temp_jer, grad_temp_target;
@@ -237,7 +439,7 @@ class CatchingOptimizer {
         grad_acceleration.setZero();
         cost_acceleration = 0.0;
         Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
-        
+
         auto max_penalty = thrust.squaredNorm() - params_.max_thrust * params_.max_thrust;
         if (max_penalty > 0.0) {
             double gradient = 0.0;
@@ -495,7 +697,7 @@ class CatchingOptimizer {
 
         return penalty > 0.0;
     }
-    
+
     static double objectiveFunction(void* ptr_optimizer,
                                     const double* vars,
                                     double* grads,
@@ -528,7 +730,8 @@ class CatchingOptimizer {
                             optimizer->landing_att_z_vec_ * optimizer->tail_length_;
         tail_state.col(1) = tail_velocity;
         tail_state.col(2) = forwardThrust(tail_angle, optimizer->params_.thrust_half_range, optimizer->params_.thrust_half_level) *
-                            optimizer->landing_att_z_vec_ + optimizer->params_.gravity_vec;
+                                optimizer->landing_att_z_vec_ +
+                            optimizer->params_.gravity_vec;
         tail_state.col(3).setZero();
 
         auto tic = std::chrono::steady_clock::now();
@@ -573,34 +776,6 @@ class CatchingOptimizer {
 
         return cost;
     }
-
-    DroneState initial_state_;
-    
-    TrajOptParameters params_;
-    minco::MINCO_S4_Uniform minco_optimizer_;
-    lbfgs::lbfgs_parameter_t lbfgs_params_;
-
-    double* optimization_vars_ = nullptr;
-    int iteration_count_ = 0;
-    double log_time_var_ = 0.0;
-    double optimized_total_duration_ = 0.0;
-    double inner_loop_duration_ = 0.0;
-    double integral_duration_ = 0.0;
-
-    std::shared_ptr<SimpleTrajectory> target_traj_;
-
-    Eigen::Vector3d target_pos_;
-    Eigen::Vector3d target_vel_;
-
-    Eigen::Vector3d landing_att_z_vec_;
-    Eigen::Vector3d landing_basis_x_;
-    Eigen::Vector3d landing_basis_y_;
-    Eigen::Vector3d landing_vel_;
-    double body_radius_ = 0.1;
-    double platform_radius_ = 0.3;
-    double tail_length_ = 0.3;
-
-    Eigen::MatrixXd initial_state_matrix_;
 
     /* Static private helper functions */
     static void solveBoundaryValueProblem(double duration,
@@ -763,15 +938,15 @@ class CatchingOptimizer {
     }
 
     static int earlyExitCallback(void* ptr_optimizer,
-                                const double* vars,
-                                const double* grads,
-                                const double fx,
-                                const double xnorm,
-                                const double gnorm,
-                                const double step,
-                                int n,
-                                int k,
-                                int ls) {
+                                 const double* vars,
+                                 const double* grads,
+                                 const double fx,
+                                 const double xnorm,
+                                 const double gnorm,
+                                 const double step,
+                                 int n,
+                                 int k,
+                                 int ls) {
         return 0;
     }
 
@@ -837,12 +1012,12 @@ class CatchingOptimizer {
     }
 
     void setInitialState(const DroneState& initial_state) {
-         initial_state_ = initial_state;
+        initial_state_ = initial_state;
 
-         initial_state_matrix_.col(0) = initial_state_.position;
-         initial_state_matrix_.col(1) = initial_state_.velocity;
-         initial_state_matrix_.col(2) = initial_state_.acceleration;
-         initial_state_matrix_.col(3) = initial_state_.jerk;
+        initial_state_matrix_.col(0) = initial_state_.position;
+        initial_state_matrix_.col(1) = initial_state_.velocity;
+        initial_state_matrix_.col(2) = initial_state_.acceleration;
+        initial_state_matrix_.col(3) = initial_state_.jerk;
     }
 
     int getIterationCount() const { return iteration_count_; }
