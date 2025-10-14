@@ -301,6 +301,8 @@ class CatchingOptimizer {
     Eigen::Vector3d target_pos_;
     Eigen::Vector3d target_vel_;
 
+    Eigen::Quaterniond catching_att_ = Eigen::Quaterniond::Identity();
+
     // TODO: these are old variables, may need to be removed
     Eigen::Vector3d landing_att_z_vec_;
     Eigen::Vector3d landing_basis_x_;
@@ -1071,6 +1073,21 @@ class CatchingOptimizer {
             -s_theta, s_phi * c_theta, c_phi * c_theta;
 
         return rot_mat;
+    }
+
+    void setTargetTrajectory(std::shared_ptr<SimpleTrajectory> target_trajectory) {
+        target_traj_ = target_trajectory;
+    }
+
+    // Sets the desired final attitude of the drone at the moment of interception.
+    void setCatchingAttitude(const Eigen::Vector3d& euler_attitude) {
+        catching_att_ = euler2Quaternion(euler_attitude);
+    }
+
+    void setCatchingAttitude(const Eigen::Quaterniond& quat_attitude) {
+        // TODO: Implement logic to use this attitude in the final state cost/constraints.
+        // For now, it's stored but not used in the optimization logic below.
+        catching_att_ = quat_attitude;
     }
 };
 
