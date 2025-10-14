@@ -391,9 +391,13 @@ class CatchingOptimizer {
                 }
 
                 double duration_to_now = (i + alpha) * minco_optimizer_.t(1);
-                target_pos_ = target_traj_->getPosition(duration_to_now);
-                target_vel_ = target_traj_->getVelocity(duration_to_now);
-                if (computePerchingCollisionCost(pos, acc, target_pos_,
+
+                // FIXME: set this after finishing the target trajectory class
+                // target_pos_ = target_traj_->getPosition(duration_to_now);
+                // target_vel_ = target_traj_->getVelocity(duration_to_now);
+                Eigen::Vector3d car_pos = target_pos_ + target_vel_ * duration_to_now;
+
+                if (computePerchingCollisionCost(pos, acc, car_pos,
                                                  grad_temp_pos, grad_temp_acc, grad_temp_target,
                                                  cost_temp)) {
                     grad_pos_total += grad_temp_pos;
