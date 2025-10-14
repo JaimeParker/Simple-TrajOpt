@@ -10,6 +10,8 @@
 #include "minco.hpp"
 #include "poly_traj_utils.hpp"
 
+#ifndef TRAJOPT_DRONE_STATE_DEFINED
+#define TRAJOPT_DRONE_STATE_DEFINED
 struct DroneState {
     Eigen::Vector3d position;
     Eigen::Vector3d velocity;
@@ -39,7 +41,10 @@ struct DroneState {
         attitude_quat << 1.0, 0.0, 0.0, 0.0;
     }
 };
+#endif  // TRAJOPT_DRONE_STATE_DEFINED
 
+#ifndef TRAJOPT_PARAMETERS_DEFINED
+#define TRAJOPT_PARAMETERS_DEFINED
 struct TrajOptParameters {
     // Dynamic Limits
     double max_velocity = 10.0;
@@ -83,6 +88,7 @@ struct TrajOptParameters {
     double lbfgs_delta = 1e-4;
     int lbfgs_line_search_type = 0;
 };
+#endif  // TRAJOPT_PARAMETERS_DEFINED
 
 struct BaseComputeParams {
     virtual ~BaseComputeParams() = default;

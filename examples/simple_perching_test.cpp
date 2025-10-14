@@ -1,4 +1,7 @@
+// #include "catching_optimizer.h"
 #include "simple_perching.h"
+
+#include <cassert>
 
 #include <Eigen/Dense>
 #include <chrono>
@@ -60,6 +63,20 @@ void printTrajectoryInfo(const std::string& name, const Trajectory& traj) {
     std::cout << "  Start: pos=" << start_pos.transpose() << ", vel=" << start_vel.transpose() << std::endl;
     std::cout << "  End:   pos=" << end_pos.transpose() << ", vel=" << end_vel.transpose() << std::endl;
 }
+
+// DroneState toDroneState(const Eigen::MatrixXd& state_matrix) {
+//     assert(state_matrix.rows() == 3 && state_matrix.cols() == 4 && "State matrix must be 3x4");
+
+//     DroneState state;
+//     state.position = state_matrix.col(0);
+//     state.velocity = state_matrix.col(1);
+//     state.acceleration = state_matrix.col(2);
+//     state.jerk = state_matrix.col(3);
+//     state.attitude.setZero();
+//     state.body_rate.setZero();
+//     state.attitude_quat.setIdentity();
+//     return state;
+// }
 
 int main() {
     std::cout << "=== Testing SimplePerching vs PerchingOptimizer ===" << std::endl;
@@ -250,6 +267,89 @@ int main() {
     } catch (const std::exception& e) {
         std::cout << "❌ Test 3 FAILED with exception: " << e.what() << std::endl;
     }
+
+    // std::cout << "\n=== Test 4: CatchingOptimizer vs PerchingOptimizer (Stationary Target) ===" << std::endl;
+
+    // try {
+    //     // Stationary target configuration
+    //     Eigen::Vector3d stationary_target_pos(5.0, 5.0, 2.0);
+    //     Eigen::Vector3d stationary_target_vel = Eigen::Vector3d::Zero();
+    //     Eigen::Quaterniond identity_quat(1.0, 0.0, 0.0, 0.0);
+    //     int num_pieces_stationary = 4;
+
+    //     // Prepare optimizers
+    //     CatchingOptimizer catching_optimizer;
+    //     traj_opt::PerchingOptimizer perching_optimizer4;
+
+    //     catching_optimizer.setDynamicLimits(10.0, 10.0, 20.0, 2.0, 3.0, 2.0);
+    //     catching_optimizer.setOptimizationWeights(1.0, 100.0, 10.0, 1.0, 1.0, 1.0, -1.0, 1.0);
+    //     catching_optimizer.setTrajectoryParams(20, num_pieces_stationary, 1, 3);
+
+    //     DroneState initial_drone_state = toDroneState(initial_state);
+    //     catching_optimizer.setInitialState(initial_drone_state);
+
+    //     DroneState terminal_state;
+    //     terminal_state.position = stationary_target_pos;
+    //     terminal_state.velocity = stationary_target_vel;
+    //     terminal_state.acceleration.setZero();
+    //     terminal_state.jerk.setZero();
+    //     terminal_state.attitude.setZero();
+    //     terminal_state.body_rate.setZero();
+    //     terminal_state.attitude_quat.setIdentity();
+    //     catching_optimizer.setTerminalState(terminal_state);
+    //     catching_optimizer.setCatchingAttitude(identity_quat);
+
+    //     perching_optimizer4.setDynamicLimits(10.0, 10.0, 20.0, 2.0, 3.0, 2.0);
+    //     perching_optimizer4.setRobotParameters(1.0, 0.3, 0.1, 0.5);
+    //     perching_optimizer4.setOptimizationWeights(1.0, -1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0);
+    //     perching_optimizer4.setIntegrationSteps(20);
+
+    //     Trajectory catching_traj;
+    //     Trajectory perching_traj4;
+
+    //     std::cout << "Generating CatchingOptimizer trajectory..." << std::endl;
+    //     auto start_time = std::chrono::high_resolution_clock::now();
+    //     bool catching_success = catching_optimizer.generateTrajectory(catching_traj);
+    //     auto catching_time = std::chrono::duration_cast<std::chrono::milliseconds>(
+    //         std::chrono::high_resolution_clock::now() - start_time);
+
+    //     std::cout << "Generating PerchingOptimizer trajectory for stationary target..." << std::endl;
+    //     start_time = std::chrono::high_resolution_clock::now();
+    //     bool perching_success4 = perching_optimizer4.generateTrajectory(initial_state,
+    //                                                                     stationary_target_pos,
+    //                                                                     stationary_target_vel,
+    //                                                                     identity_quat,
+    //                                                                     num_pieces_stationary,
+    //                                                                     perching_traj4);
+    //     auto perching_time4 = std::chrono::duration_cast<std::chrono::milliseconds>(
+    //         std::chrono::high_resolution_clock::now() - start_time);
+
+    //     std::cout << "Results:" << std::endl;
+    //     std::cout << "CatchingOptimizer success: " << (catching_success ? "YES" : "NO")
+    //               << " (time: " << catching_time.count() << "ms, iterations: "
+    //               << catching_optimizer.getIterationCount() << ")" << std::endl;
+    //     std::cout << "PerchingOptimizer success: " << (perching_success4 ? "YES" : "NO")
+    //               << " (time: " << perching_time4.count() << "ms)" << std::endl;
+
+    //     if (catching_success && perching_success4) {
+    //         printTrajectoryInfo("CatchingOptimizer", catching_traj);
+    //         printTrajectoryInfo("PerchingOptimizer (Stationary)", perching_traj4);
+
+    //         bool trajectories_match4 = compareTrajectories(catching_traj, perching_traj4, 1e-3);
+    //         std::cout << "Trajectory comparison: " << (trajectories_match4 ? "MATCH" : "MISMATCH") << std::endl;
+
+    //         if (trajectories_match4) {
+    //             std::cout << "✅ Test 4 PASSED: Catching and Perching trajectories align for stationary target" << std::endl;
+    //         } else {
+    //             std::cout << "⚠️  Test 4 WARNING: Trajectories differ for stationary target" << std::endl;
+    //         }
+    //     } else {
+    //         std::cout << "❌ Test 4 FAILED: One or both optimizations failed" << std::endl;
+    //     }
+
+    // } catch (const std::exception& e) {
+    //     std::cout << "❌ Test 4 FAILED with exception: " << e.what() << std::endl;
+    // }
 
     std::cout << "\n=== Test Summary ===" << std::endl;
     std::cout << "SimplePerching implementation complete and tested against PerchingOptimizer reference." << std::endl;

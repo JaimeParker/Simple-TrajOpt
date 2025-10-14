@@ -1042,6 +1042,10 @@ class CatchingOptimizer {
         initial_state_matrix_.col(3) = initial_state_.jerk;
     }
 
+    void setTerminalState(const DroneState& final_state) {
+        desired_terminal_state_ = final_state;
+    }
+
     int getIterationCount() const { return iteration_count_; }
     Trajectory getCurrentTrajectory() const { return minco_optimizer_.getTraj(); }
 

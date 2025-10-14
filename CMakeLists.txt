@@ -59,6 +59,9 @@ target_link_libraries(simple_comparison traj_opt_lib)
 add_executable(simple_perching_test examples/simple_perching_test.cpp)
 target_link_libraries(simple_perching_test traj_opt_lib)
 
+add_executable(catching_perching_compare examples/catching_perching_compare.cpp)
+target_link_libraries(catching_perching_compare traj_opt_lib)
+
 # Create Python module for perching optimizer
 pybind11_add_module(perching_optimizer_py src/perching_optimizer_api.cc)
 
