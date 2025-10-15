@@ -122,13 +122,20 @@ class CatchingOptimizer {
     }
 
     bool generateTrajectory(Trajectory& trajectory) {
-
         // const DroneState& initial_state,
         //                     const DroneState& terminal_state_guess,
         //                     int num_pieces,
         //                     double replanning_time = -1.0
 
         assert(params_.traj_pieces_num > 0 && "Number of trajectory pieces must be positive");
+        if (!initial_state_set_) {
+            std::cerr << "[CatchingOptimizer] Initial state has not been set!" << std::endl;
+            return false;
+        }
+        if (!terminal_state_set_) {
+            std::cerr << "[CatchingOptimizer] Terminal state has not been set!" << std::endl;
+            return false;
+        }
 
         // These has been set in function setTrajectoryParams
         // params_.traj_pieces_num = num_pieces;
@@ -309,6 +316,8 @@ class CatchingOptimizer {
     bool has_initial_guess_;
     double initial_tail_angle_;
     Eigen::Vector2d initial_tail_velocity_params_;
+    bool initial_state_set_ = false;
+    bool terminal_state_set_ = false;
 
     Eigen::Vector3d target_pos_;
     Eigen::Vector3d target_vel_;
@@ -1040,10 +1049,13 @@ class CatchingOptimizer {
         initial_state_matrix_.col(1) = initial_state_.velocity;
         initial_state_matrix_.col(2) = initial_state_.acceleration;
         initial_state_matrix_.col(3) = initial_state_.jerk;
+
+        initial_state_set_ = true;
     }
 
     void setTerminalState(const DroneState& final_state) {
         desired_terminal_state_ = final_state;
+        terminal_state_set_ = true;
     }
 
     int getIterationCount() const { return iteration_count_; }

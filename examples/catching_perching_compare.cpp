@@ -1,10 +1,10 @@
-#include "catching_optimizer.h"
-#include "perching_optimizer.h"
-
 #include <Eigen/Dense>
 #include <chrono>
 #include <iomanip>
 #include <iostream>
+
+#include "catching_optimizer.h"
+#include "perching_optimizer.h"
 
 namespace {
 
