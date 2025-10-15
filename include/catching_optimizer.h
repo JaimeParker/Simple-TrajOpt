@@ -159,7 +159,8 @@ class CatchingOptimizer {
         updateTerminalState(initial_target_pos, initial_target_vel);
 
         // TODO: will this be directly the desired_terminal_state_.velocity?
-        landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
+        // landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
+        landing_vel_ = desired_terminal_state_.velocity;
 
         landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d::UnitZ());
         if (landing_basis_x_.squaredNorm() == 0.0) {
@@ -263,13 +264,14 @@ class CatchingOptimizer {
         updateTerminalState(final_target_pos, final_target_vel);
         desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
         desired_terminal_state_.jerk.setZero();
-        landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
+        // landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
+        landing_vel_ = desired_terminal_state_.velocity;
 
         Eigen::Vector3d tail_velocity;
         computeTailVelocity(tail_velocity_params, landing_vel_, landing_basis_x_, landing_basis_y_, tail_velocity);
 
         Eigen::MatrixXd terminal_state_matrix(3, 4);
-        terminal_state_matrix.col(0) = desired_terminal_state_.position + landing_att_z_vec_ * tail_length_;
+        terminal_state_matrix.col(0) = desired_terminal_state_.position;
         terminal_state_matrix.col(1) = tail_velocity;
         terminal_state_matrix.col(2) = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
         terminal_state_matrix.col(3).setZero();
@@ -324,10 +326,6 @@ class CatchingOptimizer {
     Eigen::Vector3d landing_basis_x_;
     Eigen::Vector3d landing_basis_y_;
     Eigen::Vector3d landing_vel_;
-    double landing_speed_offset_ = 1.0;
-    double body_radius_ = 0.1;
-    double platform_radius_ = 0.3;
-    double tail_length_ = 0.3;
 
     void addTimeIntegralPenalty(double& cost) {
         Eigen::Vector3d pos, vel, acc, jer, snap;
@@ -590,141 +588,105 @@ class CatchingOptimizer {
                                       Eigen::Vector3d& grad_acceleration,
                                       Eigen::Vector3d& grad_target_position,
                                       double& cost) {
-        static double eps = 1e-6;
+        // static double eps = 1e-6;
 
-        double distance_sq = (position - target_position).squaredNorm();
-        double safe_radius = platform_radius_ + body_radius_;
-        double safe_radius_sq = safe_radius * safe_radius;
-        double penalty_distance = safe_radius_sq - distance_sq;
-        penalty_distance /= safe_radius_sq;
-        double gradient_distance = 0.0;
-        double smoothing = smoothedZeroOne(penalty_distance, gradient_distance);
-        if (smoothing == 0.0) {
-            return false;
-        }
+        // double distance_sq = (position - target_position).squaredNorm();
+        // double safe_radius = platform_radius_ + body_radius_;
+        // double safe_radius_sq = safe_radius * safe_radius;
+        // double penalty_distance = safe_radius_sq - distance_sq;
+        // penalty_distance /= safe_radius_sq;
+        // double gradient_distance = 0.0;
+        // double smoothing = smoothedZeroOne(penalty_distance, gradient_distance);
+        // if (smoothing == 0.0) {
+        //     return false;
+        // }
 
-        Eigen::Vector3d grad_position_distance = gradient_distance * 2.0 * (target_position - position);
-        Eigen::Vector3d grad_target_position_distance = -grad_position_distance;
+        // Eigen::Vector3d grad_position_distance = gradient_distance * 2.0 * (target_position - position);
+        // Eigen::Vector3d grad_target_position_distance = -grad_position_distance;
 
-        Eigen::Vector3d plane_normal = -landing_att_z_vec_;
-        double plane_offset = plane_normal.dot(target_position);
+        // Eigen::Vector3d plane_normal = -landing_att_z_vec_;
+        // double plane_offset = plane_normal.dot(target_position);
 
-        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
-        Eigen::Vector3d body_z_vec = normalizeVector(thrust);
+        // Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
+        // Eigen::Vector3d body_z_vec = normalizeVector(thrust);
 
-        Eigen::Matrix<double, 2, 3> matrix_btrt;
-        double body_z_x = body_z_vec.x();
-        double body_z_y = body_z_vec.y();
-        double body_z_z = body_z_vec.z();
+        // Eigen::Matrix<double, 2, 3> matrix_btrt;
+        // double body_z_x = body_z_vec.x();
+        // double body_z_y = body_z_vec.y();
+        // double body_z_z = body_z_vec.z();
 
-        double inv_one_plus_z = 1.0 / (1.0 + body_z_z);
+        // double inv_one_plus_z = 1.0 / (1.0 + body_z_z);
 
-        matrix_btrt(0, 0) = 1.0 - body_z_x * body_z_x * inv_one_plus_z;
-        matrix_btrt(0, 1) = -body_z_x * body_z_y * inv_one_plus_z;
-        matrix_btrt(0, 2) = -body_z_x;
-        matrix_btrt(1, 0) = -body_z_x * body_z_y * inv_one_plus_z;
-        matrix_btrt(1, 1) = 1.0 - body_z_y * body_z_y * inv_one_plus_z;
-        matrix_btrt(1, 2) = -body_z_y;
+        // matrix_btrt(0, 0) = 1.0 - body_z_x * body_z_x * inv_one_plus_z;
+        // matrix_btrt(0, 1) = -body_z_x * body_z_y * inv_one_plus_z;
+        // matrix_btrt(0, 2) = -body_z_x;
+        // matrix_btrt(1, 0) = -body_z_x * body_z_y * inv_one_plus_z;
+        // matrix_btrt(1, 1) = 1.0 - body_z_y * body_z_y * inv_one_plus_z;
+        // matrix_btrt(1, 2) = -body_z_y;
 
-        Eigen::Vector2d v2 = matrix_btrt * plane_normal;
-        double v2_norm = std::sqrt(v2.squaredNorm() + eps);
-        double penalty = plane_normal.dot(position) - (tail_length_ - 0.005) * plane_normal.dot(body_z_vec) -
-                         plane_offset + body_radius_ * v2_norm;
+        // Eigen::Vector2d v2 = matrix_btrt * plane_normal;
+        // double v2_norm = std::sqrt(v2.squaredNorm() + eps);
+        // double penalty = plane_normal.dot(position) - (tail_length_ - 0.005) * plane_normal.dot(body_z_vec) -
+        //                  plane_offset + body_radius_ * v2_norm;
 
-        if (penalty > 0.0) {
-            double gradient = 0.0;
-            cost = smoothedL1(penalty, gradient);
+        // if (penalty > 0.0) {
+        //     double gradient = 0.0;
+        //     cost = smoothedL1(penalty, gradient);
 
-            grad_position = plane_normal;
-            grad_target_position = -plane_normal;
-            Eigen::Vector2d grad_v2 = body_radius_ * v2 / v2_norm;
+        //     grad_position = plane_normal;
+        //     grad_target_position = -plane_normal;
+        //     Eigen::Vector2d grad_v2 = body_radius_ * v2 / v2_norm;
 
-            Eigen::Matrix<double, 2, 3> dM_dax, dM_day, dM_daz;
-            double inv_one_plus_z_sq = inv_one_plus_z * inv_one_plus_z;
+        //     Eigen::Matrix<double, 2, 3> dM_dax, dM_day, dM_daz;
+        //     double inv_one_plus_z_sq = inv_one_plus_z * inv_one_plus_z;
 
-            dM_dax(0, 0) = -2.0 * body_z_x * inv_one_plus_z;
-            dM_dax(0, 1) = -body_z_y * inv_one_plus_z;
-            dM_dax(0, 2) = -1.0;
-            dM_dax(1, 0) = -body_z_y * inv_one_plus_z;
-            dM_dax(1, 1) = 0.0;
-            dM_dax(1, 2) = 0.0;
+        //     dM_dax(0, 0) = -2.0 * body_z_x * inv_one_plus_z;
+        //     dM_dax(0, 1) = -body_z_y * inv_one_plus_z;
+        //     dM_dax(0, 2) = -1.0;
+        //     dM_dax(1, 0) = -body_z_y * inv_one_plus_z;
+        //     dM_dax(1, 1) = 0.0;
+        //     dM_dax(1, 2) = 0.0;
 
-            dM_day(0, 0) = 0.0;
-            dM_day(0, 1) = -body_z_x * inv_one_plus_z;
-            dM_day(0, 2) = 0.0;
-            dM_day(1, 0) = -body_z_x * inv_one_plus_z;
-            dM_day(1, 1) = -2.0 * body_z_y * inv_one_plus_z;
-            dM_day(1, 2) = -1.0;
+        //     dM_day(0, 0) = 0.0;
+        //     dM_day(0, 1) = -body_z_x * inv_one_plus_z;
+        //     dM_day(0, 2) = 0.0;
+        //     dM_day(1, 0) = -body_z_x * inv_one_plus_z;
+        //     dM_day(1, 1) = -2.0 * body_z_y * inv_one_plus_z;
+        //     dM_day(1, 2) = -1.0;
 
-            dM_daz(0, 0) = body_z_x * body_z_x * inv_one_plus_z_sq;
-            dM_daz(0, 1) = body_z_x * body_z_y * inv_one_plus_z_sq;
-            dM_daz(0, 2) = 0.0;
-            dM_daz(1, 0) = body_z_x * body_z_y * inv_one_plus_z_sq;
-            dM_daz(1, 1) = body_z_y * body_z_y * inv_one_plus_z_sq;
-            dM_daz(1, 2) = 0.0;
+        //     dM_daz(0, 0) = body_z_x * body_z_x * inv_one_plus_z_sq;
+        //     dM_daz(0, 1) = body_z_x * body_z_y * inv_one_plus_z_sq;
+        //     dM_daz(0, 2) = 0.0;
+        //     dM_daz(1, 0) = body_z_x * body_z_y * inv_one_plus_z_sq;
+        //     dM_daz(1, 1) = body_z_y * body_z_y * inv_one_plus_z_sq;
+        //     dM_daz(1, 2) = 0.0;
 
-            Eigen::Matrix<double, 2, 3> dv2_dzb;
-            dv2_dzb.col(0) = dM_dax * plane_normal;
-            dv2_dzb.col(1) = dM_day * plane_normal;
-            dv2_dzb.col(2) = dM_daz * plane_normal;
+        //     Eigen::Matrix<double, 2, 3> dv2_dzb;
+        //     dv2_dzb.col(0) = dM_dax * plane_normal;
+        //     dv2_dzb.col(1) = dM_day * plane_normal;
+        //     dv2_dzb.col(2) = dM_daz * plane_normal;
 
-            Eigen::Vector3d grad_body_z = dv2_dzb.transpose() * grad_v2 - tail_length_ * plane_normal;
+        //     Eigen::Vector3d grad_body_z = dv2_dzb.transpose() * grad_v2 - tail_length_ * plane_normal;
 
-            grad_acceleration = getNormalizationJacobian(thrust).transpose() * grad_body_z;
+        //     grad_acceleration = getNormalizationJacobian(thrust).transpose() * grad_body_z;
 
-            gradient *= smoothing;
-            grad_position_distance *= cost;
-            grad_target_position_distance *= cost;
-            cost *= smoothing;
-            grad_position = gradient * grad_position + grad_position_distance;
-            grad_acceleration *= gradient;
-            grad_target_position = gradient * grad_target_position + grad_target_position_distance;
+        //     gradient *= smoothing;
+        //     grad_position_distance *= cost;
+        //     grad_target_position_distance *= cost;
+        //     cost *= smoothing;
+        //     grad_position = gradient * grad_position + grad_position_distance;
+        //     grad_acceleration *= gradient;
+        //     grad_target_position = gradient * grad_target_position + grad_target_position_distance;
 
-            cost *= params_.collision_weight;
-            grad_position *= params_.collision_weight;
-            grad_acceleration *= params_.collision_weight;
-            grad_target_position *= params_.collision_weight;
+        //     cost *= params_.collision_weight;
+        //     grad_position *= params_.collision_weight;
+        //     grad_acceleration *= params_.collision_weight;
+        //     grad_target_position *= params_.collision_weight;
 
-            return true;
-        }
+        //     return true;
+        // }
+        // return false;
         return false;
-    }
-
-    bool checkCollision(const Eigen::Vector3d& position,
-                        const Eigen::Vector3d& acceleration,
-                        const Eigen::Vector3d& target_position) {
-        if ((position - target_position).norm() > platform_radius_) {
-            return false;
-        }
-
-        static double eps = 1e-6;
-
-        Eigen::Vector3d plane_normal = -landing_att_z_vec_;
-        double plane_offset = plane_normal.dot(target_position);
-
-        Eigen::Vector3d thrust = acceleration - params_.gravity_vec;
-        Eigen::Vector3d body_z_vec = normalizeVector(thrust);
-
-        Eigen::Matrix<double, 2, 3> matrix_btrt;
-        double body_z_x = body_z_vec.x();
-        double body_z_y = body_z_vec.y();
-        double body_z_z = body_z_vec.z();
-
-        double inv_one_plus_z = 1.0 / (1.0 + body_z_z);
-
-        matrix_btrt(0, 0) = 1.0 - body_z_x * body_z_x * inv_one_plus_z;
-        matrix_btrt(0, 1) = -body_z_x * body_z_y * inv_one_plus_z;
-        matrix_btrt(0, 2) = -body_z_x;
-        matrix_btrt(1, 0) = -body_z_x * body_z_y * inv_one_plus_z;
-        matrix_btrt(1, 1) = 1.0 - body_z_y * body_z_y * inv_one_plus_z;
-        matrix_btrt(1, 2) = -body_z_y;
-
-        Eigen::Vector2d v2 = matrix_btrt * plane_normal;
-        double v2_norm = std::sqrt(v2.squaredNorm() + eps);
-        double penalty = plane_normal.dot(position) - (tail_length_ - 0.005) * plane_normal.dot(body_z_vec) -
-                         plane_offset + body_radius_ * v2_norm;
-
-        return penalty > 0.0;
     }
 
     static double objectiveFunction(void* ptr_optimizer,
@@ -760,7 +722,7 @@ class CatchingOptimizer {
         Eigen::Vector3d target_pos = optimizer->target_traj_->getPosition(clamped_time);
         Eigen::Vector3d target_vel = optimizer->target_traj_->getVelocity(clamped_time);
 
-        Eigen::Vector3d landing_velocity = target_vel - optimizer->landing_att_z_vec_ * optimizer->landing_speed_offset_;
+        Eigen::Vector3d landing_velocity = target_vel;
         optimizer->landing_vel_ = landing_velocity;
 
         Eigen::Vector3d tail_velocity;
@@ -771,8 +733,7 @@ class CatchingOptimizer {
                             tail_velocity);
 
         Eigen::MatrixXd tail_state(3, 4);
-        tail_state.col(0) = target_pos +
-                            optimizer->landing_att_z_vec_ * optimizer->tail_length_;
+        tail_state.col(0) = target_pos;
         tail_state.col(1) = tail_velocity;
         tail_state.col(2) = forwardThrust(tail_angle, optimizer->params_.thrust_half_range, optimizer->params_.thrust_half_level) *
                                 optimizer->landing_att_z_vec_ +
