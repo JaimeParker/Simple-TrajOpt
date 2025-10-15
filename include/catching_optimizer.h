@@ -120,7 +120,6 @@ class CatchingOptimizer {
     }
 
     bool generateTrajectory(Trajectory& trajectory) {
-        assert(params_.traj_pieces_num > 0 && "Number of trajectory pieces must be positive");
         if (!initial_state_set_) {
             throw std::invalid_argument("[CatchingOptimizer] Initial state has not been set!");
         }
@@ -143,22 +142,23 @@ class CatchingOptimizer {
         Eigen::Map<Eigen::MatrixXd> intermediate_waypoints(optimization_vars_ + params_.time_var_dim, 3, params_.waypoint_num);
         double& tail_angle = optimization_vars_[params_.time_var_dim + 3 * params_.waypoint_num];
         Eigen::Map<Eigen::Vector2d> tail_velocity_params(optimization_vars_ + params_.time_var_dim + 3 * params_.waypoint_num + 1);
+        tail_velocity_params.setZero();
 
         quaternionToZAxis(desired_terminal_state_.attitude_quat, landing_att_z_vec_);
 
-        // TODO: check if we need this min max operation
+        // FIXME: initial target info should be set directly from outside
+        // since this is the result of guidance's interception calculation
+        // So initial guess should be set before, otherwise, use the target traj at t=0
         const double target_traj_duration = target_traj_->getTotalDuration();
         double sample_time = 0.0;
         if (target_traj_duration > 0.0) {
             sample_time = std::min(std::max(sample_time, 0.0), target_traj_duration);
         }
-        const Eigen::Vector3d initial_target_pos = target_traj_->getPosition(sample_time);
-        const Eigen::Vector3d initial_target_vel = target_traj_->getVelocity(sample_time);
+        const auto initial_target_pos = target_traj_->getPosition(sample_time);
+        const auto initial_target_vel = target_traj_->getVelocity(sample_time);
         updateTerminalState(initial_target_pos, initial_target_vel);
 
-        params_.thrust_half_level = 0.5 * (params_.max_thrust + params_.min_thrust);
-        params_.thrust_half_range = 0.5 * (params_.max_thrust - params_.min_thrust);
-
+        // TODO: will this be directly the desired_terminal_state_.velocity?
         landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
 
         landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d::UnitZ());
@@ -169,64 +169,49 @@ class CatchingOptimizer {
         landing_basis_y_ = landing_att_z_vec_.cross(landing_basis_x_);
         landing_basis_y_.normalize();
 
-        tail_velocity_params.setZero();
-
         minco_optimizer_.reset(params_.traj_pieces_num);
 
         tail_angle = 0.0;
 
-        // TODO: remove this later
-        bool reuse_initial_guess = false;
+        double min_duration = (desired_terminal_state_.position - initial_state_.position).norm() / params_.max_velocity;
+        CoefficientMat coefficient_matrix;
+        double max_body_rate = 0.0;
 
-        if (reuse_initial_guess) {
-            // Do not uncomment this yet!!!
-            // double initial_total_duration = initial_trajectory_.getTotalDuration() - replanning_time;
-            // log_time_var = logC2(initial_total_duration / params_.traj_pieces_num);
+        // TODO: maybe the acceleration should be set
+        desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
+        desired_terminal_state_.jerk.setZero();
 
-            // for (int i = 1; i < params_.traj_pieces_num; ++i) {
-            //     double segment_time = (static_cast<double>(i) / params_.traj_pieces_num) * initial_total_duration;
-            //     intermediate_waypoints.col(i - 1) = initial_trajectory_.getPos(segment_time + replanning_time);
-            // }
-            // tail_angle = initial_tail_angle_;
-            // tail_velocity_params = initial_tail_velocity_params_;
-        } else {
-            double boundary_duration = (desired_terminal_state_.position - initial_state_.position).norm() / params_.max_velocity;
-            CoefficientMat coefficient_matrix;
-            double max_body_rate = 0.0;
+        do {
+            min_duration += 1.0;
+            double boundary_sample_time = min_duration;
+            if (target_traj_duration > 0.0) {
+                boundary_sample_time = std::min(std::max(boundary_sample_time, 0.0), target_traj_duration);
+            }
+            const auto target_pos_at_duration = target_traj_->getPosition(boundary_sample_time);
+            const auto target_vel_at_duration = target_traj_->getVelocity(boundary_sample_time);
 
+            updateTerminalState(target_pos_at_duration, target_vel_at_duration);
             desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
             desired_terminal_state_.jerk.setZero();
 
-            do {
-                boundary_duration += 1.0;
-                // TODO: check if we need this min max operation
-                double boundary_sample_time = boundary_duration;
-                if (target_traj_duration > 0.0) {
-                    boundary_sample_time = std::min(std::max(boundary_sample_time, 0.0), target_traj_duration);
-                }
-                const Eigen::Vector3d target_pos_at_duration = target_traj_->getPosition(boundary_sample_time);
-                const Eigen::Vector3d target_vel_at_duration = target_traj_->getVelocity(boundary_sample_time);
-                updateTerminalState(target_pos_at_duration, target_vel_at_duration);
-                desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
-                desired_terminal_state_.jerk.setZero();
-                solveBoundaryValueProblem(boundary_duration, initial_state_, desired_terminal_state_, coefficient_matrix);
-                std::vector<double> durations{boundary_duration};
-                std::vector<CoefficientMat> coefficients{coefficient_matrix};
-                Trajectory boundary_traj(durations, coefficients);
-                max_body_rate = getMaxBodyRate(boundary_traj);
-            } while (max_body_rate > 1.5 * params_.max_body_rate);
+            solveBoundaryValueProblem(min_duration, initial_state_, desired_terminal_state_, coefficient_matrix);
+            std::vector<double> durations{min_duration};
+            std::vector<CoefficientMat> coefficients{coefficient_matrix};
+            Trajectory boundary_traj(durations, coefficients);
 
-            Eigen::VectorXd polynomial_terms(8);
-            polynomial_terms(7) = 1.0;
-            for (int i = 1; i < params_.traj_pieces_num; ++i) {
-                double segment_time = (static_cast<double>(i) / params_.traj_pieces_num) * boundary_duration;
-                for (int j = 6; j >= 0; --j) {
-                    polynomial_terms(j) = polynomial_terms(j + 1) * segment_time;
-                }
-                intermediate_waypoints.col(i - 1) = coefficient_matrix * polynomial_terms;
+            max_body_rate = getMaxBodyRate(boundary_traj);
+        } while (max_body_rate > 1.5 * params_.max_body_rate);
+
+        Eigen::VectorXd polynomial_terms(8);
+        polynomial_terms(7) = 1.0;
+        for (int i = 1; i < params_.traj_pieces_num; ++i) {
+            double segment_time = (static_cast<double>(i) / params_.traj_pieces_num) * min_duration;
+            for (int j = 6; j >= 0; --j) {
+                polynomial_terms(j) = polynomial_terms(j + 1) * segment_time;
             }
-            log_time_var = logC2(boundary_duration / params_.traj_pieces_num);
+            intermediate_waypoints.col(i - 1) = coefficient_matrix * polynomial_terms;
         }
+        log_time_var = logC2(min_duration / params_.traj_pieces_num);
 
         lbfgs::lbfgs_parameter_t lbfgs_params{};
         lbfgs::lbfgs_load_default_parameters(&lbfgs_params);
@@ -274,6 +259,7 @@ class CatchingOptimizer {
         }
         const Eigen::Vector3d final_target_pos = target_traj_->getPosition(final_sample_time);
         const Eigen::Vector3d final_target_vel = target_traj_->getVelocity(final_sample_time);
+
         updateTerminalState(final_target_pos, final_target_vel);
         desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
         desired_terminal_state_.jerk.setZero();
@@ -424,28 +410,24 @@ class CatchingOptimizer {
                 double duration_to_now = (i + alpha) * minco_optimizer_.t(1);
 
                 // TODO: check if we need this min max operation
-                Eigen::Vector3d car_pos = Eigen::Vector3d::Zero();
-                Eigen::Vector3d car_vel = Eigen::Vector3d::Zero();
-                if (target_traj_) {
-                    double clamped_time = duration_to_now;
-                    double traj_duration = target_traj_->getTotalDuration();
-                    if (traj_duration > 0.0) {
-                        clamped_time = std::min(std::max(clamped_time, 0.0), traj_duration);
-                    } else {
-                        clamped_time = 0.0;
-                    }
-                    car_pos = target_traj_->getPosition(clamped_time);
-                    car_vel = target_traj_->getVelocity(clamped_time);
+                double clamped_time = duration_to_now;
+                double traj_duration = target_traj_->getTotalDuration();
+                if (traj_duration > 0.0) {
+                    clamped_time = std::min(std::max(clamped_time, 0.0), traj_duration);
+                } else {
+                    clamped_time = 0.0;
                 }
+                auto target_pos = target_traj_->getPosition(clamped_time);
+                auto target_vel = target_traj_->getVelocity(clamped_time);
 
-                if (computePerchingCollisionCost(pos, acc, car_pos,
+                if (computePerchingCollisionCost(pos, acc, target_pos,
                                                  grad_temp_pos, grad_temp_acc, grad_temp_target,
                                                  cost_temp)) {
                     grad_pos_total += grad_temp_pos;
                     grad_acc_total += grad_temp_acc;
                     cost_inner += cost_temp;
                 }
-                double grad_target_time = grad_temp_target.dot(car_vel);
+                double grad_target_time = grad_temp_target.dot(target_vel);
 
                 grad_coeff = beta0 * grad_pos_total.transpose();
                 grad_time = grad_pos_total.transpose() * vel;
@@ -768,27 +750,18 @@ class CatchingOptimizer {
         // TODO: check if we need this min max operation
         double total_time = optimizer->params_.traj_pieces_num * piece_duration;
         double clamped_time = total_time;
-        if (optimizer->target_traj_) {
-            double traj_duration = optimizer->target_traj_->getTotalDuration();
-            if (traj_duration > 0.0) {
-                clamped_time = std::min(std::max(clamped_time, 0.0), traj_duration);
-            } else {
-                clamped_time = 0.0;
-            }
+        double traj_duration = optimizer->target_traj_->getTotalDuration();
+        if (traj_duration > 0.0) {
+            clamped_time = std::min(std::max(clamped_time, 0.0), traj_duration);
+        } else {
+            clamped_time = 0.0;
         }
 
-        Eigen::Vector3d target_pos = optimizer->desired_terminal_state_.position;
-        Eigen::Vector3d target_vel = optimizer->desired_terminal_state_.velocity;
-        if (optimizer->target_traj_) {
-            target_pos = optimizer->target_traj_->getPosition(clamped_time);
-            target_vel = optimizer->target_traj_->getVelocity(clamped_time);
-        }
+        Eigen::Vector3d target_pos = optimizer->target_traj_->getPosition(clamped_time);
+        Eigen::Vector3d target_vel = optimizer->target_traj_->getVelocity(clamped_time);
 
-        Eigen::Vector3d landing_velocity = optimizer->landing_vel_;
-        if (optimizer->target_traj_) {
-            landing_velocity = target_vel - optimizer->landing_att_z_vec_ * optimizer->landing_speed_offset_;
-            optimizer->landing_vel_ = landing_velocity;
-        }
+        Eigen::Vector3d landing_velocity = target_vel - optimizer->landing_att_z_vec_ * optimizer->landing_speed_offset_;
+        optimizer->landing_vel_ = landing_velocity;
 
         Eigen::Vector3d tail_velocity;
         computeTailVelocity(tail_velocity_params,
@@ -1172,15 +1145,17 @@ class CatchingOptimizer {
         target_traj_set_ = true;
     }
 
-    // Sets the desired final attitude of the drone at the moment of interception.
     void setCatchingAttitude(const Eigen::Vector3d& euler_attitude) {
-        catching_att_ = euler2Quaternion(euler_attitude);
+        // TODO: check, I leave the set for catching_att_ commented, although it is not used anywhere
+        // But I worry set desired_terminal_state_ will cause some problem, I'm not sure if this variable will be optimized
+        // catching_att_ = euler2Quaternion(euler_attitude);
+        desired_terminal_state_.attitude = euler_attitude;
     }
 
     void setCatchingAttitude(const Eigen::Quaterniond& quat_attitude) {
-        // TODO: Implement logic to use this attitude in the final state cost/constraints.
-        // For now, it's stored but not used in the optimization logic below.
-        catching_att_ = quat_attitude;
+        // catching_att_ = quat_attitude;
+        q2EulerAngle(quat_attitude, desired_terminal_state_.attitude);
+        desired_terminal_state_.attitude_quat = quat_attitude;
     }
 };
 
