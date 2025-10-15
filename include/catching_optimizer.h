@@ -108,7 +108,6 @@ class CatchingOptimizer {
         landing_att_z_vec_.setZero();
         landing_basis_x_.setZero();
         landing_basis_y_.setZero();
-        landing_vel_.setZero();
         initial_state_matrix_.resize(3, 4);
         initial_state_matrix_.setZero();
     }
@@ -157,10 +156,6 @@ class CatchingOptimizer {
         const auto initial_target_pos = target_traj_->getPosition(sample_time);
         const auto initial_target_vel = target_traj_->getVelocity(sample_time);
         updateTerminalState(initial_target_pos, initial_target_vel);
-
-        // TODO: will this be directly the desired_terminal_state_.velocity?
-        // landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
-        landing_vel_ = desired_terminal_state_.velocity;
 
         landing_basis_x_ = landing_att_z_vec_.cross(Eigen::Vector3d::UnitZ());
         if (landing_basis_x_.squaredNorm() == 0.0) {
@@ -264,11 +259,12 @@ class CatchingOptimizer {
         updateTerminalState(final_target_pos, final_target_vel);
         desired_terminal_state_.acceleration = forwardThrust(tail_angle, params_.thrust_half_range, params_.thrust_half_level) * landing_att_z_vec_ + params_.gravity_vec;
         desired_terminal_state_.jerk.setZero();
-        // landing_vel_ = desired_terminal_state_.velocity - landing_att_z_vec_ * landing_speed_offset_;
-        landing_vel_ = desired_terminal_state_.velocity;
 
         Eigen::Vector3d tail_velocity;
-        computeTailVelocity(tail_velocity_params, landing_vel_, landing_basis_x_, landing_basis_y_, tail_velocity);
+        // TODO: this function change little of the desired_terminal_state_.velocity and set it to tail_velocity
+        // so I try to set tail_velocity directly
+        // computeTailVelocity(tail_velocity_params, desired_terminal_state_.velocity, landing_basis_x_, landing_basis_y_, tail_velocity);
+        tail_velocity = desired_terminal_state_.velocity;
 
         Eigen::MatrixXd terminal_state_matrix(3, 4);
         terminal_state_matrix.col(0) = desired_terminal_state_.position;
@@ -325,7 +321,6 @@ class CatchingOptimizer {
     Eigen::Vector3d landing_att_z_vec_;
     Eigen::Vector3d landing_basis_x_;
     Eigen::Vector3d landing_basis_y_;
-    Eigen::Vector3d landing_vel_;
 
     void addTimeIntegralPenalty(double& cost) {
         Eigen::Vector3d pos, vel, acc, jer, snap;
@@ -689,10 +684,7 @@ class CatchingOptimizer {
         return false;
     }
 
-    static double objectiveFunction(void* ptr_optimizer,
-                                    const double* vars,
-                                    double* grads,
-                                    int n) {
+    static double objectiveFunction(void* ptr_optimizer, const double* vars, double* grads, int n) {
         auto* optimizer = static_cast<CatchingOptimizer*>(ptr_optimizer);
         optimizer->iteration_count_++;
 
@@ -722,15 +714,14 @@ class CatchingOptimizer {
         Eigen::Vector3d target_pos = optimizer->target_traj_->getPosition(clamped_time);
         Eigen::Vector3d target_vel = optimizer->target_traj_->getVelocity(clamped_time);
 
-        Eigen::Vector3d landing_velocity = target_vel;
-        optimizer->landing_vel_ = landing_velocity;
-
+        // TODO: mind the tail_velocity here, should we set it directly?
         Eigen::Vector3d tail_velocity;
-        computeTailVelocity(tail_velocity_params,
-                            landing_velocity,
-                            optimizer->landing_basis_x_,
-                            optimizer->landing_basis_y_,
-                            tail_velocity);
+        // computeTailVelocity(tail_velocity_params,
+        //                     target_vel,
+        //                     optimizer->landing_basis_x_,
+        //                     optimizer->landing_basis_y_,
+        //                     tail_velocity);
+        tail_velocity = target_vel;
 
         Eigen::MatrixXd tail_state(3, 4);
         tail_state.col(0) = target_pos;
@@ -965,6 +956,16 @@ class CatchingOptimizer {
                                  int n,
                                  int k,
                                  int ls) {
+        (void)ptr_optimizer;
+        (void)vars;
+        (void)grads;
+        (void)fx;
+        (void)xnorm;
+        (void)gnorm;
+        (void)step;
+        (void)n;
+        (void)k;
+        (void)ls;
         return 0;
     }
 

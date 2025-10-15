@@ -145,6 +145,7 @@ int main() {
             std::cout << "✅ Comparison PASSED" << std::endl;
         } else {
             std::cout << "❌ Comparison FAILED" << std::endl;
+            std::cout << "Be noticed, after version 292770762807924611dc69d5a558229d019d4674, this comparison become meaningless" << std::endl;
         }
     } else {
         std::cout << "❌ Comparison skipped due to failed optimization" << std::endl;
