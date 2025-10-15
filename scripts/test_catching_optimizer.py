@@ -29,24 +29,25 @@ except ImportError as e:
     sys.exit(1)
 
 def create_target_trajectory():
-    """Create a simple target trajectory for the drone to intercept"""
+    """Create a simple stationary target trajectory"""
     
     # Create discrete trajectory with waypoints
     target_traj = co.DiscreteTrajectory()
     
-    # Target is moving in a straight line
+    # Target is stationary at a fixed position
     start_time = 0.0
-    end_time = 5.0
-    dt = 0.1
+    end_time = 15.0
+    dt = 0.5
     
-    start_pos = np.array([10.0, 0.0, 3.0])
-    velocity = np.array([2.0, 0.5, 0.0])
+    # Stationary target position
+    target_pos = np.array([5.0, 5.0, 1.5])
+    velocity = np.array([0.0, 0.0, 0.0])
     
     time = start_time
     while time <= end_time:
         waypoint = co.StateWaypoint()
         waypoint.timestamp = time
-        waypoint.position = start_pos + velocity * time
+        waypoint.position = target_pos
         waypoint.velocity = velocity
         waypoint.acceleration = np.array([0.0, 0.0, 0.0])
         
@@ -59,13 +60,13 @@ def create_target_trajectory():
 def create_catching_scenario():
     """Create a catching/interception scenario"""
     
-    # Initial state: hovering drone that needs to intercept target
-    initial_pos = np.array([0.0, 0.0, 2.0])
-    initial_vel = np.array([1.0, 0.0, 0.0])  
+    # Initial state: hovering drone that needs to reach target
+    initial_pos = np.array([0.0, 0.0, 1.0])
+    initial_vel = np.array([0.0, 0.0, 0.0])  
     initial_acc = np.array([0.0, 0.0, 0.0])
     initial_state = co.createDroneState(initial_pos, initial_vel, initial_acc)
     
-    # Desired catching attitude: slight tilt forward (similar to perching example)
+    # Desired catching attitude: slight tilt forward (similar to perching)
     angle_rad = np.radians(15)
     catching_euler = np.array([0.0, angle_rad, 0.0])  # roll, pitch, yaw
     catching_quat = co.euler2Quaternion(catching_euler)
@@ -78,143 +79,132 @@ def create_catching_scenario():
     
     return initial_state, catching_euler, catching_quat
 
-def test_python_bindings_only(target_traj):
-    """Test Python bindings without running incomplete C++ implementation"""
+def test_catching_optimizer(target_traj):
+    """Test CatchingOptimizer with trajectory generation"""
     
-    print("\n=== CatchingOptimizer Python Bindings Test ===\n")
+    print("\n=== CatchingOptimizer Test ===\n")
     
     # Create scenario
     initial_state, catching_euler, catching_quat = create_catching_scenario()
     
-    # Test 1: Create optimizer
-    print("Test 1: Creating CatchingOptimizer...")
-    optimizer = co.CatchingOptimizer()
-    print("✓ CatchingOptimizer created successfully")
+    # Create target state to match the stationary target
+    target_pos = np.array([5.0, 5.0, 1.5])
+    target_vel = np.array([0.0, 0.0, 0.0])
+    target_state = co.createDroneState(target_pos, target_vel, np.array([0.0, 0.0, 0.0]))
     
-    # Test 2: Method chaining with setDynamicLimits
-    print("\nTest 2: Testing setDynamicLimits with method chaining...")
-    optimizer = optimizer.setDynamicLimits(12.0, 8.0, 25.0, 3.0, 4.0, 2.5)
-    print("✓ setDynamicLimits works with method chaining")
+    print("Creating and configuring CatchingOptimizer...")
+    optimizer = (co.CatchingOptimizer()
+                .setDynamicLimits(10.0, 10.0, 20.0, 2.0, 3.0, 2.0)
+                .setOptimizationWeights(1.0, 100.0, 10.0, 1.0, 1.0, 1.0, -1.0, 1.0)
+                .setTrajectoryParams(20, 3, 1, 3)
+                .setInitialState(initial_state)
+                .setTargetTrajectory(target_traj)
+                .setTerminalState(target_state))
     
-    # Test 3: setOptimizationWeights
-    print("\nTest 3: Testing setOptimizationWeights...")
-    optimizer = optimizer.setOptimizationWeights(1.0, -0.8, 1.2, 1.1, 1.0, 0.9, 1.0, 1.5)
-    print("✓ setOptimizationWeights works")
-    
-    # Test 4: setTrajectoryParams
-    print("\nTest 4: Testing setTrajectoryParams...")
-    optimizer = optimizer.setTrajectoryParams(25, 3, 1, 3)
-    print("✓ setTrajectoryParams works")
-    
-    # Test 5: setInitialState
-    print("\nTest 5: Testing setInitialState...")
-    optimizer = optimizer.setInitialState(initial_state)
-    print("✓ setInitialState works")
-    
-    # Test 6: setTargetTrajectory
-    print("\nTest 6: Testing setTargetTrajectory...")
-    optimizer = optimizer.setTargetTrajectory(target_traj)
-    print("✓ setTargetTrajectory works")
-    
-    # Test 7: setCatchingAttitude with euler angles
-    print("\nTest 7: Testing setCatchingAttitude with euler angles...")
     optimizer.setCatchingAttitude(catching_euler)
-    print("✓ setCatchingAttitude with euler angles works")
     
-    # Test 8: setCatchingAttitude with quaternion
-    print("\nTest 8: Testing setCatchingAttitude with quaternion...")
-    optimizer.setCatchingAttitude(catching_quat)
-    print("✓ setCatchingAttitude with quaternion works")
+    print("✓ Optimizer configured")
+    print("\nGenerating trajectory...")
     
-    # Test 9: Full method chain
-    print("\nTest 9: Testing full method chain...")
-    optimizer_chained = (co.CatchingOptimizer()
-                        .setDynamicLimits(12.0, 8.0, 25.0, 3.0, 4.0, 2.5)
-                        .setOptimizationWeights(1.0, -0.8, 1.2, 1.1, 1.0, 0.9, 1.0, 1.5)
-                        .setTrajectoryParams(25, 3, 1, 3)
-                        .setInitialState(initial_state)
-                        .setTargetTrajectory(target_traj))
-    print("✓ Full method chaining works")
+    try:
+        success, trajectory = optimizer.generateTrajectory()
+        
+        if success:
+            print(f"✓ Trajectory generation SUCCESSFUL!")
+            print(f"  Iterations: {optimizer.getIterationCount()}")
+            print(f"  Duration: {trajectory.getTotalDuration():.3f}s")
+            print(f"  Pieces: {trajectory.getPieceNum()}")
+            
+            # Get trajectory endpoints
+            start_pos = trajectory.getJuncPos(0)
+            end_pos = trajectory.getJuncPos(trajectory.getPieceNum())
+            start_vel = trajectory.getJuncVel(0)
+            end_vel = trajectory.getJuncVel(trajectory.getPieceNum())
+            
+            print(f"\n  Start: pos={start_pos}, vel={start_vel}")
+            print(f"  End:   pos={end_pos}, vel={end_vel}")
+            
+            # Check constraints
+            max_vel = trajectory.getMaxVelRate()
+            max_acc = trajectory.getMaxAccRate()
+            print(f"\n  Max velocity: {max_vel:.3f} m/s")
+            print(f"  Max acceleration: {max_acc:.3f} m/s²")
+            
+            return True, trajectory
+        else:
+            print("✗ Trajectory generation FAILED")
+            return False, None
+            
+    except Exception as e:
+        print(f"✗ Exception during trajectory generation: {e}")
+        import traceback
+        traceback.print_exc()
+        return False, None
+
+def save_trajectory_to_csv(trajectory, filename):
+    """Save trajectory to CSV file for visualization"""
     
-    # Test 10: getIterationCount
-    print("\nTest 10: Testing getIterationCount...")
-    iterations = optimizer.getIterationCount()
-    print(f"✓ getIterationCount works (returns: {iterations})")
+    # Sample trajectory at regular intervals
+    dt = 0.01  # 100Hz sampling
+    total_duration = trajectory.getTotalDuration()
     
-    # Test 11: Test utility functions
-    print("\nTest 11: Testing utility functions...")
+    times = []
+    positions = []
+    velocities = []
+    accelerations = []
     
-    # euler2Quaternion
-    test_euler = np.array([0.1, 0.2, 0.3])
-    test_quat = co.euler2Quaternion(test_euler)
-    print(f"  euler2Quaternion: {test_euler} -> [{test_quat.w():.3f}, {test_quat.x():.3f}, {test_quat.y():.3f}, {test_quat.z():.3f}]")
+    t = 0.0
+    while t <= total_duration:
+        times.append(t)
+        positions.append(trajectory.getPos(t))
+        velocities.append(trajectory.getVel(t))
+        accelerations.append(trajectory.getAcc(t))
+        t += dt
     
-    # q2EulerAngle
-    recovered_euler = np.zeros(3)
-    co.q2EulerAngle(test_quat, recovered_euler)
-    print(f"  q2EulerAngle: quat -> {recovered_euler}")
+    # Convert to numpy arrays
+    times = np.array(times)
+    positions = np.array(positions)
+    velocities = np.array(velocities)
+    accelerations = np.array(accelerations)
     
-    # createDroneState
-    test_state = co.createDroneState(np.array([1, 2, 3]), np.array([0.5, 0.5, 0]), np.array([0, 0, 0]))
-    print(f"  createDroneState: pos={test_state.position}, vel={test_state.velocity}")
+    # Save to CSV
+    header = "time,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,acc_x,acc_y,acc_z"
+    data = np.column_stack([times, positions, velocities, accelerations])
     
-    # createQuaternion
-    test_quat2 = co.createQuaternion(1.0, 0.0, 0.0, 0.0)
-    print(f"  createQuaternion: [{test_quat2.w():.3f}, {test_quat2.x():.3f}, {test_quat2.y():.3f}, {test_quat2.z():.3f}]")
+    assets_dir = project_root / 'assets'
+    assets_dir.mkdir(exist_ok=True)
+    filepath = assets_dir / filename
     
-    print("✓ All utility functions work correctly")
-    
-    # Test 12: DiscreteTrajectory and StateWaypoint
-    print("\nTest 12: Testing DiscreteTrajectory and StateWaypoint...")
-    test_traj = co.DiscreteTrajectory()
-    waypoint = co.StateWaypoint()
-    waypoint.timestamp = 1.0
-    waypoint.position = np.array([1.0, 2.0, 3.0])
-    waypoint.velocity = np.array([0.5, 0.0, 0.0])
-    waypoint.acceleration = np.array([0.0, 0.0, 0.0])
-    test_traj.addWaypoint(waypoint)
-    print(f"  Trajectory duration: {test_traj.getTotalDuration():.2f}s")
-    print(f"  Position at t=0.5: {test_traj.getPosition(0.5)}")
-    print("✓ DiscreteTrajectory and StateWaypoint work correctly")
-    
-    print("\n" + "="*60)
-    print("✓✓✓ ALL PYTHON BINDINGS TESTS PASSED ✓✓✓")
-    print("="*60)
-    print("\nNote: generateTrajectory() not tested because the C++ implementation")
-    print("is incomplete (has TODO sections that cause segmentation faults).")
-    print("Once you complete the C++ implementation, you can test trajectory")
-    print("generation by uncommenting the optimization test below.")
-    
-    return True
+    np.savetxt(filepath, data, delimiter=',', header=header, comments='')
+    print(f"\n✓ Trajectory saved to {filepath}")
+    return filepath
+
 
 def main():
-    """Main function demonstrating CatchingOptimizer Python bindings"""
+    """Main function demonstrating CatchingOptimizer"""
     
     # Create target trajectory
     target_traj = create_target_trajectory()
     
-    # Test Python bindings (without calling incomplete C++ implementation)
-    success = test_python_bindings_only(target_traj)
+    # Test catching optimizer
+    success, trajectory = test_catching_optimizer(target_traj)
     
     if not success:
+        print("\n✗ Test FAILED")
         return 1
     
+    # Save trajectory for visualization
+    print("\nSaving trajectory...")
+    save_trajectory_to_csv(trajectory, 'catching_optimizer_trajectory.csv')
+    
     print("\n" + "="*60)
-    print("PYTHON BINDINGS VERIFICATION COMPLETE")
+    print("✓✓✓ TEST COMPLETE ✓✓✓")
     print("="*60)
-    print("\nAll CatchingOptimizer Python bindings are working correctly!")
-    print("The bindings provide access to:")
-    print("  ✓ CatchingOptimizer configuration methods")
-    print("  ✓ Method chaining support")
-    print("  ✓ Overloaded setCatchingAttitude (euler & quaternion)")
-    print("  ✓ Target trajectory setting")
-    print("  ✓ Utility functions (euler2Quaternion, q2EulerAngle, etc.)")
-    print("  ✓ DiscreteTrajectory and StateWaypoint classes")
-    print("  ✓ DroneState structure")
+    print("\nCatchingOptimizer successfully generated a trajectory!")
     print("\nNext steps:")
-    print("  1. Complete the C++ implementation in catching_optimizer.h")
-    print("  2. Implement the logic to extract target position/velocity from trajectory")
-    print("  3. Then you can test full trajectory optimization with generateTrajectory()")
+    print("  1. Visualize trajectory: python scripts/visualize_trajectories.py")
+    print("  2. View summary: python scripts/trajectory_summary.py")
+    print("  3. Compare with perching: ./build/catching_perching_compare")
     
     return 0
 

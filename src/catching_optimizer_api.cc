@@ -147,6 +147,10 @@ PYBIND11_MODULE(catching_optimizer_py, m) {
                  self.setInitialState(initial_state);
                  return self; }, "Set initial state of the drone", py::arg("initial_state"), py::return_value_policy::reference_internal)
 
+        .def("setTerminalState", [](CatchingOptimizer& self, const DroneState& terminal_state) -> CatchingOptimizer& {
+                 self.setTerminalState(terminal_state);
+                 return self; }, "Set desired terminal/final state of the drone", py::arg("terminal_state"), py::return_value_policy::reference_internal)
+
         .def("setTargetTrajectory", [](CatchingOptimizer& self, std::shared_ptr<SimpleTrajectory> target_trajectory) -> CatchingOptimizer& {
                  self.setTargetTrajectory(target_trajectory);
                  return self; }, "Set the target trajectory to intercept", py::arg("target_trajectory"), py::return_value_policy::reference_internal)
