@@ -102,9 +102,6 @@ class CatchingOptimizer {
           optimized_total_duration_(0.0),
           inner_loop_duration_(0.0),
           integral_duration_(0.0) {
-        catching_att_z_vec_.setZero();
-        catching_basis_x_.setZero();
-        catching_basis_y_.setZero();
         initial_state_matrix_.resize(3, 4);
         initial_state_matrix_.setZero();
     }
@@ -317,9 +314,9 @@ class CatchingOptimizer {
     Eigen::Vector3d initial_guess_pursuer_intercept_acc_ = Eigen::Vector3d::Zero();
 
     /* terminal catching attitude */
-    Eigen::Vector3d catching_att_z_vec_;
-    Eigen::Vector3d catching_basis_x_;
-    Eigen::Vector3d catching_basis_y_;
+    Eigen::Vector3d catching_att_z_vec_ = Eigen::Vector3d::UnitZ();
+    Eigen::Vector3d catching_basis_x_ = Eigen::Vector3d::UnitX();
+    Eigen::Vector3d catching_basis_y_ = Eigen::Vector3d::UnitY();
     Eigen::Quaterniond catching_att_ = Eigen::Quaterniond::Identity();
 
     void addTimeIntegralPenalty(double& cost) {
@@ -582,6 +579,13 @@ class CatchingOptimizer {
                                       Eigen::Vector3d& grad_acceleration,
                                       Eigen::Vector3d& grad_target_position,
                                       double& cost) {
+        (void)position;
+        (void)acceleration;
+        (void)target_position;
+        (void)grad_position;
+        (void)grad_acceleration;
+        (void)grad_target_position;
+        (void)cost;
         // static double eps = 1e-6;
 
         // double distance_sq = (position - target_position).squaredNorm();
@@ -684,6 +688,7 @@ class CatchingOptimizer {
     }
 
     static double objectiveFunction(void* ptr_optimizer, const double* vars, double* grads, int n) {
+        (void)n;
         auto* optimizer = static_cast<CatchingOptimizer*>(ptr_optimizer);
         optimizer->iteration_count_++;
 
@@ -1097,7 +1102,7 @@ class CatchingOptimizer {
     }
 
     void setCatchingAttitude(const Eigen::Vector3d& euler_attitude) {
-        // call setCatchingAttitude or set directly in setTerminalState 
+        // call setCatchingAttitude or set directly in setTerminalState
         desired_terminal_state_.attitude = euler_attitude;
         desired_terminal_state_.attitude_quat = euler2Quaternion(euler_attitude);
     }

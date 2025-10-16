@@ -469,6 +469,7 @@ class PerchingOptimizer {
                                     const double* vars,
                                     double* grads,
                                     int n) {
+        (void)n;
         auto* optimizer = static_cast<PerchingOptimizer*>(ptr_optimizer);
         optimizer->iteration_count_++;
 
@@ -554,6 +555,15 @@ class PerchingOptimizer {
                                  int n,
                                  int k,
                                  int ls) {
+        (void)vars;
+        (void)grads;
+        (void)fx;
+        (void)xnorm;
+        (void)gnorm;
+        (void)step;
+        (void)n;
+        (void)k;
+        (void)ls;
         auto* optimizer = static_cast<PerchingOptimizer*>(ptr_optimizer);
         if (optimizer->debug_pause_) {
             const double& log_time_var = vars[0];
