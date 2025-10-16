@@ -7,9 +7,15 @@ a stationary target position.
 """
 
 import numpy as np
+import matplotlib
+# Use non-interactive backend if DISPLAY is not available
+import os
+if 'DISPLAY' not in os.environ:
+    matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 import matplotlib.patches as patches
+from pathlib import Path
 
 def load_trajectory_data(filename):
     """Load trajectory data from CSV file."""
@@ -36,7 +42,7 @@ def load_trajectory_data(filename):
         return None
 
 
-def create_catching_visualization(traj_data):
+def create_catching_visualization(traj_data, target_data=None):
     """Create comprehensive visualization for catching trajectory."""
     
     # Set up the figure with subplots
@@ -46,13 +52,21 @@ def create_catching_visualization(traj_data):
     color_traj = '#1f77b4'  # Blue for trajectory
     color_target = '#d62728'  # Red for target
     
-    # Target position (stationary)
-    target_pos = np.array([5.0, 5.0, 1.5])
+    # Target position (from data or default)
+    if target_data is not None:
+        target_pos = np.array([target_data['pos_x'][-1], target_data['pos_y'][-1], target_data['pos_z'][-1]])
+    else:
+        target_pos = np.array([5.0, 5.0, 1.5])
     
     # 3D trajectory plot
     ax1 = fig.add_subplot(2, 3, 1, projection='3d')
     
-    # Plot trajectory
+    # Plot target trajectory if available
+    if target_data is not None:
+        ax1.plot(target_data['pos_x'], target_data['pos_y'], target_data['pos_z'], 
+                 color=color_target, linewidth=2, label='Target Trajectory', alpha=0.6, linestyle='--')
+    
+    # Plot catching trajectory
     ax1.plot(traj_data['pos_x'], traj_data['pos_y'], traj_data['pos_z'], 
              color=color_traj, linewidth=2, label='Catching Trajectory', alpha=0.8)
     
@@ -64,7 +78,7 @@ def create_catching_visualization(traj_data):
     
     # Mark target position
     ax1.scatter(*target_pos, color=color_target, s=200, marker='*', 
-                label='Target Position', zorder=10, edgecolors='black', linewidths=2)
+                label='Target End Position', zorder=10, edgecolors='black', linewidths=2)
     
     ax1.set_xlabel('X Position (m)', fontsize=10)
     ax1.set_ylabel('Y Position (m)', fontsize=10)
@@ -75,16 +89,22 @@ def create_catching_visualization(traj_data):
     
     # Position components over time
     ax2 = fig.add_subplot(2, 3, 2)
-    ax2.plot(traj_data['time'], traj_data['pos_x'], color=color_traj, linewidth=2, label='X')
-    ax2.plot(traj_data['time'], traj_data['pos_y'], color=color_traj, linewidth=2, 
-             linestyle='--', label='Y')
-    ax2.plot(traj_data['time'], traj_data['pos_z'], color=color_traj, linewidth=2, 
-             linestyle=':', label='Z')
     
-    # Add target lines
-    ax2.axhline(y=target_pos[0], color=color_target, linestyle='-', alpha=0.5, label='Target X')
-    ax2.axhline(y=target_pos[1], color=color_target, linestyle='--', alpha=0.5, label='Target Y')
-    ax2.axhline(y=target_pos[2], color=color_target, linestyle=':', alpha=0.5, label='Target Z')
+    # Plot target trajectory if available
+    if target_data is not None:
+        ax2.plot(target_data['time'], target_data['pos_x'], color=color_target, linewidth=1.5, 
+                 linestyle='-', alpha=0.5, label='Target X')
+        ax2.plot(target_data['time'], target_data['pos_y'], color=color_target, linewidth=1.5, 
+                 linestyle='--', alpha=0.5, label='Target Y')
+        ax2.plot(target_data['time'], target_data['pos_z'], color=color_target, linewidth=1.5, 
+                 linestyle=':', alpha=0.5, label='Target Z')
+    
+    # Plot catching trajectory
+    ax2.plot(traj_data['time'], traj_data['pos_x'], color=color_traj, linewidth=2, label='Pursuer X')
+    ax2.plot(traj_data['time'], traj_data['pos_y'], color=color_traj, linewidth=2, 
+             linestyle='--', label='Pursuer Y')
+    ax2.plot(traj_data['time'], traj_data['pos_z'], color=color_traj, linewidth=2, 
+             linestyle=':', label='Pursuer Z')
     
     ax2.set_xlabel('Time (s)', fontsize=10)
     ax2.set_ylabel('Position (m)', fontsize=10)
@@ -138,9 +158,14 @@ def create_catching_visualization(traj_data):
     # Top view (X-Y plane)
     ax6 = fig.add_subplot(2, 3, 6)
     
-    # Plot trajectory in X-Y plane
+    # Plot target trajectory if available
+    if target_data is not None:
+        ax6.plot(target_data['pos_x'], target_data['pos_y'], color=color_target, linewidth=2, 
+                 label='Target Trajectory', alpha=0.6, linestyle='--')
+    
+    # Plot catching trajectory in X-Y plane
     ax6.plot(traj_data['pos_x'], traj_data['pos_y'], color=color_traj, linewidth=2, 
-             label='Trajectory', alpha=0.8)
+             label='Catching Trajectory', alpha=0.8)
     
     # Mark key points
     ax6.scatter(traj_data['pos_x'][0], traj_data['pos_y'][0], 
@@ -150,7 +175,7 @@ def create_catching_visualization(traj_data):
                 color='blue', s=150, marker='s', label='Final', zorder=10,
                 edgecolors='black', linewidths=2)
     ax6.scatter(target_pos[0], target_pos[1], 
-                color=color_target, s=200, marker='*', label='Target', zorder=10,
+                color=color_target, s=200, marker='*', label='Target End', zorder=10,
                 edgecolors='black', linewidths=2)
     
     ax6.set_xlabel('X Position (m)', fontsize=10)
@@ -220,8 +245,14 @@ def main():
     print("🚁 Catching Optimizer Trajectory Visualization")
     print("=" * 50)
     
+    # Get the trajectory file path relative to script location
+    script_dir = Path(__file__).parent
+    project_root = script_dir.parent
+    trajectory_file = project_root / 'assets' / 'catching_optimizer_trajectory.csv'
+    target_trajectory_file = project_root / 'assets' / 'catching_target_trajectory.csv'
+    
     # Load trajectory data
-    traj_data = load_trajectory_data('../assets/catching_optimizer_trajectory.csv')
+    traj_data = load_trajectory_data(str(trajectory_file))
     
     if traj_data is None:
         print("❌ Failed to load trajectory data")
@@ -230,21 +261,31 @@ def main():
     
     print("✅ Trajectory data loaded successfully")
     
+    # Load target trajectory data (optional)
+    target_data = load_trajectory_data(str(target_trajectory_file))
+    if target_data is not None:
+        print("✅ Target trajectory data loaded successfully")
+    else:
+        print("⚠️  Target trajectory data not found, using default target position")
+    
     # Print statistics
     print_trajectory_statistics(traj_data)
     
     # Create visualization
     print("\n🎨 Creating visualization...")
-    fig = create_catching_visualization(traj_data)
+    fig = create_catching_visualization(traj_data, target_data)
     
     # Save figure
-    output_file = '../assets/catching_trajectory_visualization.png'
-    fig.savefig(output_file, dpi=150, bbox_inches='tight')
+    output_file = project_root / 'assets' / 'catching_trajectory_visualization.png'
+    fig.savefig(str(output_file), dpi=150, bbox_inches='tight')
     print(f"✅ Visualization saved to {output_file}")
     
-    # Show interactive plot
-    print("\n📊 Displaying interactive plot...")
-    plt.show()
+    # Show interactive plot if display is available
+    if 'DISPLAY' in os.environ:
+        print("\n📊 Displaying interactive plot...")
+        plt.show()
+    else:
+        print("\n📊 Display not available, plot saved to file only")
     
     return 0
 

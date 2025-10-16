@@ -37,17 +37,17 @@ def create_target_trajectory():
     # Target is stationary at a fixed position
     start_time = 0.0
     end_time = 15.0
-    dt = 0.5
+    dt = 0.2
     
     # Stationary target position
-    target_pos = np.array([5.0, 5.0, 1.5])
-    velocity = np.array([0.0, 0.0, 0.0])
+    target_pos = np.array([1.0, 1.0, 1.5])
+    velocity = np.array([0.2, 0.0, 0.0])
     
     time = start_time
     while time <= end_time:
         waypoint = co.StateWaypoint()
         waypoint.timestamp = time
-        waypoint.position = target_pos
+        waypoint.position = target_pos + velocity * (time - start_time)
         waypoint.velocity = velocity
         waypoint.acceleration = np.array([0.0, 0.0, 0.0])
         
@@ -179,6 +179,43 @@ def save_trajectory_to_csv(trajectory, filename):
     print(f"\n✓ Trajectory saved to {filepath}")
     return filepath
 
+def save_target_trajectory_to_csv(target_traj, filename, duration):
+    """Save target trajectory to CSV file for visualization"""
+    
+    # Sample target trajectory at regular intervals
+    dt = 0.01  # 100Hz sampling
+    
+    times = []
+    positions = []
+    velocities = []
+    accelerations = []
+    
+    t = 0.0
+    while t <= duration:
+        times.append(t)
+        positions.append(target_traj.getPosition(t))
+        velocities.append(target_traj.getVelocity(t))
+        accelerations.append(target_traj.getAcceleration(t))
+        t += dt
+    
+    # Convert to numpy arrays
+    times = np.array(times)
+    positions = np.array(positions)
+    velocities = np.array(velocities)
+    accelerations = np.array(accelerations)
+    
+    # Save to CSV
+    header = "time,pos_x,pos_y,pos_z,vel_x,vel_y,vel_z,acc_x,acc_y,acc_z"
+    data = np.column_stack([times, positions, velocities, accelerations])
+    
+    assets_dir = project_root / 'assets'
+    assets_dir.mkdir(exist_ok=True)
+    filepath = assets_dir / filename
+    
+    np.savetxt(filepath, data, delimiter=',', header=header, comments='')
+    print(f"\n✓ Target trajectory saved to {filepath}")
+    return filepath
+
 
 def main():
     """Main function demonstrating CatchingOptimizer"""
@@ -194,15 +231,16 @@ def main():
         return 1
     
     # Save trajectory for visualization
-    print("\nSaving trajectory...")
+    print("\nSaving trajectories...")
     save_trajectory_to_csv(trajectory, 'catching_optimizer_trajectory.csv')
+    save_target_trajectory_to_csv(target_traj, 'catching_target_trajectory.csv', trajectory.getTotalDuration())
     
     print("\n" + "="*60)
     print("✓✓✓ TEST COMPLETE ✓✓✓")
     print("="*60)
     print("\nCatchingOptimizer successfully generated a trajectory!")
     print("\nNext steps:")
-    print("  1. Visualize trajectory: python scripts/visualize_trajectories.py")
+    print("  1. Visualize trajectory: python scripts/visualize_catching.py")
     print("  2. View summary: python scripts/trajectory_summary.py")
     print("  3. Compare with perching: ./build/catching_perching_compare")
     

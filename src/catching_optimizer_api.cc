@@ -159,6 +159,10 @@ PYBIND11_MODULE(catching_optimizer_py, m) {
 
         .def("setCatchingAttitude", py::overload_cast<const Eigen::Quaterniond&>(&CatchingOptimizer::setCatchingAttitude), "Set desired catching attitude using quaternion", py::arg("quat_attitude"))
 
+        .def("setInitialGuess", [](CatchingOptimizer& self, double intercept_time, const Eigen::Vector3d& intercept_pos, const Eigen::Vector3d& intercept_vel, const Eigen::Vector3d& intercept_acc) -> CatchingOptimizer& {
+                 self.setInitialGuess(intercept_time, intercept_pos, intercept_vel, intercept_acc);
+                 return self; }, "Set initial guess for warm-starting the optimization with predicted intercept state", py::arg("intercept_time"), py::arg("intercept_pos"), py::arg("intercept_vel"), py::arg("intercept_acc") = Eigen::Vector3d::Zero(), py::return_value_policy::reference_internal)
+
         // Main trajectory generation method - wrapped to return tuple
         .def("generateTrajectory", [](CatchingOptimizer& self) -> py::tuple {
                  Trajectory trajectory;
