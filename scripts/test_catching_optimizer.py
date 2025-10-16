@@ -36,11 +36,11 @@ def create_target_trajectory():
     
     # Target is stationary at a fixed position
     start_time = 0.0
-    end_time = 15.0
+    end_time = 10.0
     dt = 0.2
     
     # Stationary target position
-    target_pos = np.array([1.0, 1.0, 1.5])
+    target_pos = np.array([5.0, 5.0, 1.5])
     velocity = np.array([0.2, 0.0, 0.0])
     
     time = start_time
@@ -67,17 +67,15 @@ def create_catching_scenario():
     initial_state = co.createDroneState(initial_pos, initial_vel, initial_acc)
     
     # Desired catching attitude: slight tilt forward (similar to perching)
-    angle_rad = np.radians(15)
+    angle_rad = np.radians(-15)
     catching_euler = np.array([0.0, angle_rad, 0.0])  # roll, pitch, yaw
-    catching_quat = co.euler2Quaternion(catching_euler)
     
     print(f"✓ Catching scenario created")
     print(f"  Initial position: {initial_state.position}")
     print(f"  Initial velocity: {initial_state.velocity}")
     print(f"  Catching attitude (euler): {catching_euler}")
-    print(f"  Catching attitude (quat): [{catching_quat.w():.3f}, {catching_quat.x():.3f}, {catching_quat.y():.3f}, {catching_quat.z():.3f}]")
     
-    return initial_state, catching_euler, catching_quat
+    return initial_state, catching_euler
 
 def test_catching_optimizer(target_traj):
     """Test CatchingOptimizer with trajectory generation"""
@@ -85,7 +83,7 @@ def test_catching_optimizer(target_traj):
     print("\n=== CatchingOptimizer Test ===\n")
     
     # Create scenario
-    initial_state, catching_euler, catching_quat = create_catching_scenario()
+    initial_state, catching_euler = create_catching_scenario()
     
     # Create target state to match the stationary target
     target_pos = np.array([5.0, 5.0, 1.5])
@@ -96,7 +94,7 @@ def test_catching_optimizer(target_traj):
     optimizer = (co.CatchingOptimizer()
                 .setDynamicLimits(10.0, 10.0, 20.0, 2.0, 3.0, 2.0)
                 .setOptimizationWeights(1.0, 100.0, 10.0, 1.0, 1.0, 1.0, -1.0, 1.0)
-                .setTrajectoryParams(20, 3, 1, 3)
+                .setTrajectoryParams(20, 3, 1, 0)
                 .setInitialState(initial_state)
                 .setTargetTrajectory(target_traj)
                 .setTerminalState(target_state))
